@@ -1,0 +1,403 @@
+import { useEffect, useRef } from "react";
+import { useFrame, useThree } from "@react-three/fiber";
+import { Billboard, Text } from "@react-three/drei";
+import * as THREE from "three";
+
+const CAR_WIDTH = 1.05;
+const CAR_LENGTH = 1.75;
+const CAR_HEIGHT = 0.42;
+
+function pointInsideRect(x, z, rect) {
+  return x >= rect.xMin && x <= rect.xMax && z >= rect.zMin && z <= rect.zMax;
+}
+
+function pointOnAnyRoad(x, z, roadRects) {
+  return roadRects.some((rect) => pointInsideRect(x, z, rect));
+}
+
+function getCarCorners(x, z, angle) {
+  const halfW = CAR_WIDTH / 2;
+  const halfL = CAR_LENGTH / 2;
+
+  const localCorners = [
+    [-halfW, -halfL],
+    [halfW, -halfL],
+    [-halfW, halfL],
+    [halfW, halfL]
+  ];
+
+  const sin = Math.sin(angle);
+  const cos = Math.cos(angle);
+
+  return localCorners.map(([localX, localZ]) => ({
+    x: x + localX * cos + localZ * sin,
+    z: z - localX * sin + localZ * cos
+  }));
+}
+
+function carFullyOnRoad(x, z, angle, roadRects) {
+  const corners = getCarCorners(x, z, angle);
+  return corners.every((corner) => pointOnAnyRoad(corner.x, corner.z, roadRects));
+}
+
+function carHitsBuilding(x, z, buildingColliders) {
+  const safetyRadius = 0.82;
+
+  return buildingColliders.some((box) => {
+    return (
+      x + safetyRadius > box.xMin &&
+      x - safetyRadius < box.xMax &&
+      z + safetyRadius > box.zMin &&
+      z - safetyRadius < box.zMax
+    );
+  });
+}
+
+function canMoveTo(x, z, angle, roadRects, buildingColliders) {
+  const onRoad = carFullyOnRoad(x, z, angle, roadRects);
+  const hitsBuilding = carHitsBuilding(x, z, buildingColliders);
+
+  return onRoad && !hitsBuilding;
+}
+
+function CarModel({ boostRef, isNight, playerName }) {
+  return (
+    <group>
+      <Billboard position={[0, 1.5, 0]}>
+        <mesh position={[0, -0.02, -0.02]}>
+          <boxGeometry args={[2.25, 0.42, 0.05]} />
+          <meshBasicMaterial color="#111827" transparent opacity={0.78} />
+        </mesh>
+
+        <Text
+          position={[0, 0, 0.04]}
+          fontSize={0.16}
+          color="#f8fafc"
+          anchorX="center"
+          anchorY="middle"
+          maxWidth={2.05}
+        >
+          {playerName || "Player"}
+        </Text>
+      </Billboard>
+
+      <mesh position={[0, 0.09, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.95, 28]} />
+        <meshBasicMaterial color="#000000" transparent opacity={0.24} depthWrite={false} />
+      </mesh>
+
+      <mesh position={[0, 0.32, 0]}>
+        <boxGeometry args={[CAR_WIDTH, CAR_HEIGHT, CAR_LENGTH]} />
+        <meshStandardMaterial
+          color="#0047ba"
+          metalness={0.35}
+          roughness={0.32}
+          emissive={isNight ? "#001a70" : "#000000"}
+          emissiveIntensity={isNight ? 0.15 : 0}
+        />
+      </mesh>
+
+      <mesh position={[0, 0.66, 0.08]}>
+        <boxGeometry args={[0.7, 0.36, 0.76]} />
+        <meshStandardMaterial
+          color="#0b1f4d"
+          metalness={0.45}
+          roughness={0.25}
+          emissive={isNight ? "#0f172a" : "#000000"}
+          emissiveIntensity={isNight ? 0.18 : 0}
+        />
+      </mesh>
+
+      <mesh position={[0, 0.72, 0.36]} rotation={[0.42, 0, 0]}>
+        <boxGeometry args={[0.58, 0.18, 0.025]} />
+        <meshStandardMaterial color="#93c5fd" transparent opacity={0.82} />
+      </mesh>
+
+      <mesh position={[0, 0.69, -0.22]} rotation={[-0.42, 0, 0]}>
+        <boxGeometry args={[0.56, 0.15, 0.025]} />
+        <meshStandardMaterial color="#93c5fd" transparent opacity={0.7} />
+      </mesh>
+
+      <mesh position={[0, 0.45, 0.62]}>
+        <boxGeometry args={[0.82, 0.08, 0.34]} />
+        <meshStandardMaterial color="#0a4fc9" metalness={0.4} roughness={0.28} />
+      </mesh>
+
+      <mesh position={[0, 0.66, -0.68]}>
+        <boxGeometry args={[0.72, 0.05, 0.12]} />
+        <meshStandardMaterial color="#111827" />
+      </mesh>
+
+      <mesh position={[0, 0.26, 0.91]}>
+        <boxGeometry args={[0.86, 0.13, 0.08]} />
+        <meshStandardMaterial color="#111827" />
+      </mesh>
+
+      <mesh position={[0, 0.26, -0.91]}>
+        <boxGeometry args={[0.86, 0.13, 0.08]} />
+        <meshStandardMaterial color="#111827" />
+      </mesh>
+
+      <mesh position={[-0.25, 0.37, 0.91]}>
+        <boxGeometry args={[0.16, 0.09, 0.04]} />
+        <meshStandardMaterial
+          color="#fef3c7"
+          emissive={isNight ? "#fff7cc" : "#fef3c7"}
+          emissiveIntensity={isNight ? 1.85 : 0.25}
+        />
+      </mesh>
+
+      <mesh position={[0.25, 0.37, 0.91]}>
+        <boxGeometry args={[0.16, 0.09, 0.04]} />
+        <meshStandardMaterial
+          color="#fef3c7"
+          emissive={isNight ? "#fff7cc" : "#fef3c7"}
+          emissiveIntensity={isNight ? 1.85 : 0.25}
+        />
+      </mesh>
+
+      {isNight && (
+        <>
+          <mesh position={[-0.25, 0.35, 1.22]} rotation={[-Math.PI / 2, 0, 0]}>
+            <coneGeometry args={[0.16, 1.0, 14]} />
+            <meshBasicMaterial color="#fde68a" transparent opacity={0.3} depthWrite={false} />
+          </mesh>
+
+          <mesh position={[0.25, 0.35, 1.22]} rotation={[-Math.PI / 2, 0, 0]}>
+            <coneGeometry args={[0.16, 1.0, 14]} />
+            <meshBasicMaterial color="#fde68a" transparent opacity={0.3} depthWrite={false} />
+          </mesh>
+        </>
+      )}
+
+      <mesh position={[-0.24, 0.35, -0.91]}>
+        <boxGeometry args={[0.16, 0.08, 0.04]} />
+        <meshStandardMaterial
+          color="#ef4444"
+          emissive="#ef4444"
+          emissiveIntensity={isNight ? 0.9 : 0.35}
+        />
+      </mesh>
+
+      <mesh position={[0.24, 0.35, -0.91]}>
+        <boxGeometry args={[0.16, 0.08, 0.04]} />
+        <meshStandardMaterial
+          color="#ef4444"
+          emissive="#ef4444"
+          emissiveIntensity={isNight ? 0.9 : 0.35}
+        />
+      </mesh>
+
+      {[
+        [-0.62, 0.18, 0.52],
+        [0.62, 0.18, 0.52],
+        [-0.62, 0.18, -0.52],
+        [0.62, 0.18, -0.52]
+      ].map((p, i) => (
+        <group key={i} position={p}>
+          <mesh rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.22, 0.22, 0.2, 16]} />
+            <meshStandardMaterial color="#050505" />
+          </mesh>
+
+          <mesh rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.1, 0.1, 0.215, 12]} />
+            <meshStandardMaterial color="#94a3b8" metalness={0.45} roughness={0.25} />
+          </mesh>
+        </group>
+      ))}
+
+      <group ref={boostRef} visible={false}>
+        <mesh position={[-0.16, 0.3, -1.02]} rotation={[Math.PI / 2, 0, 0]}>
+          <coneGeometry args={[0.1, 0.34, 10]} />
+          <meshStandardMaterial
+            color="#60a5fa"
+            emissive="#38bdf8"
+            emissiveIntensity={2}
+          />
+        </mesh>
+
+        <mesh position={[0.16, 0.3, -1.02]} rotation={[Math.PI / 2, 0, 0]}>
+          <coneGeometry args={[0.1, 0.34, 10]} />
+          <meshStandardMaterial
+            color="#67e8f9"
+            emissive="#22d3ee"
+            emissiveIntensity={2}
+          />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
+export default function CarController({
+  roadRects = [],
+  buildingColliders = [],
+  startPosition = [0, 0.25, 0],
+  isNight = false,
+  playerName = "Adittya Kumar Chowdhury"
+}) {
+  const carRef = useRef();
+  const boostRef = useRef();
+  const keys = useRef({});
+
+  const position = useRef(
+    new THREE.Vector3(startPosition[0], startPosition[1], startPosition[2])
+  );
+
+  const angle = useRef(0);
+  const currentSpeed = useRef(0);
+  const telemetryTimer = useRef(0);
+  const focusTarget = useRef(null);
+
+  const { camera } = useThree();
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      keys.current[event.key.toLowerCase()] = true;
+
+      if (["w", "a", "s", "d", "shift"].includes(event.key.toLowerCase())) {
+        focusTarget.current = null;
+      }
+    };
+
+    const handleKeyUp = (event) => {
+      keys.current[event.key.toLowerCase()] = false;
+    };
+
+    const handleFocusBuilding = (event) => {
+      const target = event.detail?.position;
+      if (!target) return;
+
+      focusTarget.current = new THREE.Vector3(target.x, 1.5, target.z);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("facultycity-focus-building", handleFocusBuilding);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("facultycity-focus-building", handleFocusBuilding);
+    };
+  }, []);
+
+  useFrame((_, delta) => {
+    if (!carRef.current) return;
+
+    const baseMoveSpeed = 7.2;
+    const nitroMultiplier = 2.05;
+    const turnSpeed = 2.5;
+
+    const turningLeft = keys.current.a;
+    const turningRight = keys.current.d;
+    const movingForward = keys.current.w;
+    const movingBackward = keys.current.s;
+    const boosting = keys.current.shift && movingForward;
+    const moving = movingForward || movingBackward;
+
+    if (turningLeft) angle.current += turnSpeed * delta;
+    if (turningRight) angle.current -= turnSpeed * delta;
+
+    let movement = 0;
+
+    const activeMoveSpeed = boosting
+      ? baseMoveSpeed * nitroMultiplier
+      : baseMoveSpeed;
+
+    if (movingForward) movement += activeMoveSpeed * delta;
+    if (movingBackward) movement -= baseMoveSpeed * delta * 0.65;
+
+    if (movement !== 0) {
+      const nextX = position.current.x + Math.sin(angle.current) * movement;
+      const nextZ = position.current.z + Math.cos(angle.current) * movement;
+
+      if (
+        canMoveTo(
+          nextX,
+          nextZ,
+          angle.current,
+          roadRects,
+          buildingColliders
+        )
+      ) {
+        position.current.x = nextX;
+        position.current.z = nextZ;
+        currentSpeed.current = Math.abs(movement / Math.max(delta, 0.001)) * 5.8;
+      } else {
+        currentSpeed.current *= 0.7;
+      }
+    } else {
+      currentSpeed.current *= 0.88;
+    }
+
+    if (boostRef.current) {
+      boostRef.current.visible = boosting;
+      boostRef.current.scale.setScalar(
+        boosting ? 1 + Math.sin(performance.now() * 0.02) * 0.15 : 1
+      );
+    }
+
+    carRef.current.position.copy(position.current);
+    carRef.current.rotation.y = angle.current;
+
+    if (focusTarget.current && !moving && !turningLeft && !turningRight) {
+      const target = focusTarget.current;
+
+      const cameraTarget = new THREE.Vector3(
+        target.x + 4.8,
+        target.y + 4.4,
+        target.z + 5.2
+      );
+
+      camera.position.lerp(cameraTarget, 0.08);
+      camera.lookAt(target.x, target.y + 0.8, target.z);
+    } else {
+      const followDistance = boosting ? 9.2 : 8;
+      const followHeight = boosting ? 5.6 : 5.2;
+      const cameraShake = boosting
+        ? Math.sin(performance.now() * 0.04) * 0.08
+        : 0;
+
+      const cameraTarget = new THREE.Vector3(
+        position.current.x - Math.sin(angle.current) * followDistance,
+        followHeight + cameraShake,
+        position.current.z - Math.cos(angle.current) * followDistance
+      );
+
+      camera.position.lerp(cameraTarget, 0.12);
+
+      camera.lookAt(
+        position.current.x + Math.sin(angle.current) * 3.2,
+        position.current.y + 0.8,
+        position.current.z + Math.cos(angle.current) * 3.2
+      );
+    }
+
+    telemetryTimer.current += delta;
+
+    if (telemetryTimer.current > 0.3) {
+      telemetryTimer.current = 0;
+
+      window.dispatchEvent(
+        new CustomEvent("facultycity-telemetry", {
+          detail: {
+            speedKmh: currentSpeed.current,
+            nitroActive: boosting,
+            carPosition: {
+              x: position.current.x,
+              z: position.current.z
+            }
+          }
+        })
+      );
+    }
+  });
+
+  return (
+    <group ref={carRef}>
+      <CarModel boostRef={boostRef} isNight={isNight} playerName={playerName} />
+    </group>
+  );
+}
