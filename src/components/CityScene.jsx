@@ -15,7 +15,6 @@ import FacultyBuilding from "./FacultyBuilding";
 import FacultyCard from "./FacultyCard";
 import CarController from "./CarController";
 
-const EDIT_API_BASE = "http://localhost:5174";
 
 const ROAD_WIDTH = 4;
 const LOT_SPACING = 4.4;
@@ -112,16 +111,22 @@ function toArray(value) {
 }
 
 function getPublicationCount(faculty) {
-  const publications = toArray(faculty.publications);
+  if (Number.isFinite(faculty?._publicationCount)) {
+    return faculty._publicationCount;
+  }
+
+  const publications = toArray(faculty?.publications);
 
   if (publications.length > 0) return publications.length;
 
-  const count = Number(faculty.publicationCount);
+  const count = Number(faculty?.publicationCount);
   return Number.isFinite(count) && count > 0 ? count : 0;
 }
 
 function getDistrictKey(faculty) {
-  const designation = String(faculty.designation || faculty.role || "").toLowerCase();
+  if (faculty?._districtKey) return faculty._districtKey;
+
+  const designation = String(faculty?.designation || faculty?.role || "").toLowerCase();
 
   if (
     designation.includes("professor") &&
@@ -144,10 +149,23 @@ function getDistrictColor(key) {
   return DISTRICTS.find((district) => district.key === key)?.color || "#475569";
 }
 
+function getFacultyId(faculty, index = 0) {
+  return String(
+    faculty?.id ??
+      faculty?.code ??
+      faculty?.email ??
+      faculty?.profileUrl ??
+      faculty?.name ??
+      `faculty-${index}`
+  );
+}
+
 function getThesisFlags(faculty) {
-  const status = String(faculty.thesisStatus || "").toLowerCase();
-  const level = String(faculty.supervisionLevel || "").toLowerCase();
-  const type = String(faculty.supervisionType || "").toLowerCase();
+  if (faculty?._thesisFlags) return faculty._thesisFlags;
+
+  const status = String(faculty?.thesisStatus || "").toLowerCase();
+  const level = String(faculty?.supervisionLevel || "").toLowerCase();
+  const type = String(faculty?.supervisionType || "").toLowerCase();
 
   const accepting = status.includes("accepting") && !status.includes("not");
   const notAccepting = status.includes("not accepting");
@@ -201,16 +219,51 @@ function buildSearchTerms(rawQuery) {
 }
 
 function getFacultySearchFields(faculty) {
+  if (faculty?._searchFields) return faculty._searchFields;
+
   return {
-    name: normalizeText(faculty.name),
-    code: normalizeText(faculty.code),
-    designation: normalizeText(faculty.designation || faculty.role),
-    biography: normalizeText(faculty.biography),
-    research: normalizeText(toArray(faculty.researchInterests).join(" ")),
-    publications: normalizeText(toArray(faculty.publications).join(" ")),
-    courses: normalizeText(toArray(faculty.courses).join(" ")),
-    thesis: normalizeText(toArray(faculty.synopsis).join(" "))
+    name: normalizeText(faculty?.name),
+    code: normalizeText(faculty?.code),
+    designation: normalizeText(faculty?.designation || faculty?.role),
+    biography: normalizeText(faculty?.biography),
+    research: normalizeText(toArray(faculty?.researchInterests).join(" ")),
+    publications: normalizeText(toArray(faculty?.publications).join(" ")),
+    courses: normalizeText(toArray(faculty?.courses).join(" ")),
+    thesis: normalizeText(toArray(faculty?.synopsis).join(" "))
   };
+}
+
+function prepareFacultyData(rawFacultyList) {
+  return rawFacultyList.map((faculty, index) => {
+    const safeFaculty = {
+      ...faculty,
+      id: faculty.id ?? faculty.code ?? faculty.email ?? faculty.profileUrl ?? index + 1
+    };
+
+    const searchFields = {
+      name: normalizeText(safeFaculty.name),
+      code: normalizeText(safeFaculty.code),
+      designation: normalizeText(safeFaculty.designation || safeFaculty.role),
+      biography: normalizeText(safeFaculty.biography),
+      research: normalizeText(toArray(safeFaculty.researchInterests).join(" ")),
+      publications: normalizeText(toArray(safeFaculty.publications).join(" ")),
+      courses: normalizeText(toArray(safeFaculty.courses).join(" ")),
+      thesis: normalizeText(toArray(safeFaculty.synopsis).join(" "))
+    };
+
+    const publicationCount = getPublicationCount(safeFaculty);
+    const districtKey = getDistrictKey(safeFaculty);
+    const thesisFlags = getThesisFlags(safeFaculty);
+
+    return {
+      ...safeFaculty,
+      _searchFields: searchFields,
+      _searchBlob: Object.values(searchFields).join(" "),
+      _publicationCount: publicationCount,
+      _districtKey: districtKey,
+      _thesisFlags: thesisFlags
+    };
+  });
 }
 
 function scoreFacultyRecommendation(faculty, query) {
@@ -386,21 +439,7 @@ function matchesSearch(faculty, searchTerm) {
     );
   }
 
-  const searchable = [
-    faculty.name,
-    faculty.code,
-    faculty.designation,
-    faculty.role,
-    faculty.email,
-    faculty.biography,
-    ...toArray(faculty.researchInterests),
-    ...toArray(faculty.courses),
-    ...toArray(faculty.publications)
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  return searchable.includes(query);
+  return String(faculty._searchBlob || "").includes(query);
 }
 
 function matchesDesignation(faculty, designationFilter) {
@@ -465,12 +504,18 @@ function buildCityLayout(faculties) {
     grouped[getDistrictKey(faculty)].push(faculty);
   }
 
-  const maxGroupSize = Math.max(
-    1,
-    ...Object.values(grouped).map((items) => items.length)
-  );
+  const activeDistricts = DISTRICTS.filter(
+  (district) => (grouped[district.key] || []).length > 0
+);
 
-  const maxRows = Math.ceil(maxGroupSize / 2);
+const visibleDistricts = activeDistricts.length > 0 ? activeDistricts : DISTRICTS;
+
+const maxGroupSize = Math.max(
+  1,
+  ...visibleDistricts.map((district) => grouped[district.key].length)
+);
+
+const maxRows = Math.ceil(maxGroupSize / 2);
 
   const cityHalfLength = Math.max(
     45,
@@ -480,8 +525,8 @@ function buildCityLayout(faculties) {
   const buildings = [];
   const buildingColliders = [];
 
-  for (const district of DISTRICTS) {
-    const districtFaculty = grouped[district.key] || [];
+  for (const district of visibleDistricts) {
+  const districtFaculty = grouped[district.key] || [];
 
     districtFaculty.forEach((faculty, index) => {
       const side = index % 2 === 0 ? -1 : 1;
@@ -513,27 +558,27 @@ function buildCityLayout(faculties) {
     });
   }
 
-  const minX = DISTRICTS[0].x - 10;
-  const maxX = DISTRICTS[DISTRICTS.length - 1].x + 10;
-  const roadRects = [];
+  const minX = visibleDistricts[0].x - 10;
+const maxX = visibleDistricts[visibleDistricts.length - 1].x + 10;
+const roadRects = [];
 
-  for (const district of DISTRICTS) {
-    roadRects.push({
-      type: "vertical",
-      key: district.key,
-      label: district.label,
-      short: district.short,
-      color: district.color,
-      xMin: district.x - ROAD_WIDTH / 2,
-      xMax: district.x + ROAD_WIDTH / 2,
-      zMin: -cityHalfLength - 4,
-      zMax: cityHalfLength + 4,
-      centerX: district.x,
-      centerZ: 0,
-      width: ROAD_WIDTH,
-      depth: cityHalfLength * 2 + 8
-    });
-  }
+  for (const district of visibleDistricts) {
+  roadRects.push({
+    type: "vertical",
+    key: district.key,
+    label: district.label,
+    short: district.short,
+    color: district.color,
+    xMin: district.x - ROAD_WIDTH / 2,
+    xMax: district.x + ROAD_WIDTH / 2,
+    zMin: -cityHalfLength - 4,
+    zMax: cityHalfLength + 4,
+    centerX: district.x,
+    centerZ: 0,
+    width: ROAD_WIDTH,
+    depth: cityHalfLength * 2 + 8
+  });
+}
 
   function addHorizontalRoad({ key, label, short, z, color }) {
     roadRects.push({
@@ -578,14 +623,15 @@ function buildCityLayout(faculties) {
   });
 
   return {
-    buildings,
-    buildingColliders,
-    roadRects,
-    cityHalfLength,
-    cityWidth: maxX - minX + 20,
-    minX,
-    maxX
-  };
+  buildings,
+  buildingColliders,
+  roadRects,
+  cityHalfLength,
+  cityWidth: maxX - minX + 20,
+  minX,
+  maxX,
+  visibleDistricts
+};
 }
 
 function makeTransforms(
@@ -837,9 +883,11 @@ function Road({ road, isNight }) {
 }
 
 function DistrictGrounds({ layout }) {
+  const districts = layout.visibleDistricts || DISTRICTS;
+
   return (
     <>
-      {DISTRICTS.map((district) => (
+      {districts.map((district) => (
         <mesh
           key={district.key}
           position={[district.x, -0.026, 0]}
@@ -964,22 +1012,22 @@ function RoadStripes({ layout, isNight }) {
 
     layout.roadRects.forEach((road) => {
       if (road.type === "vertical") {
-        const stripeCount = Math.floor(road.depth / 7);
+        const stripeCount = Math.floor(road.depth / 11);
 
         for (let i = 0; i < stripeCount; i++) {
           vertical.push({
-            position: [road.centerX, 0.03, road.zMin + 3.5 + i * 7],
+            position: [road.centerX, 0.03, road.zMin + 5.5 + i * 11],
             rotation: [-Math.PI / 2, 0, 0]
           });
         }
       }
 
       if (road.type === "horizontal") {
-        const stripeCount = Math.floor(road.width / 7);
+        const stripeCount = Math.floor(road.width / 11);
 
         for (let i = 0; i < stripeCount; i++) {
           horizontal.push({
-            position: [road.xMin + 3.5 + i * 7, 0.03, road.centerZ],
+            position: [road.xMin + 5.5 + i * 11, 0.03, road.centerZ],
             rotation: [-Math.PI / 2, 0, 0]
           });
         }
@@ -1237,36 +1285,7 @@ function InstancedStreetLamps({ positions, isNight }) {
   );
 }
 
-function Benches({ positions }) {
-  const seatTransforms = useMemo(
-    () =>
-      positions.map(([x, y, z], index) => ({
-        position: [x, y + 0.42, z],
-        rotation: [0, index % 2 === 0 ? 0 : Math.PI / 2, 0]
-      })),
-    [positions]
-  );
 
-  const backTransforms = useMemo(
-    () =>
-      positions.map(([x, y, z], index) => ({
-        position: [
-          x + (index % 2 === 0 ? 0 : -0.22),
-          y + 0.68,
-          z + (index % 2 === 0 ? -0.22 : 0)
-        ],
-        rotation: [0, index % 2 === 0 ? 0 : Math.PI / 2, 0]
-      })),
-    [positions]
-  );
-
-  return (
-    <>
-      <InstancedBoxes transforms={seatTransforms} args={[1.2, 0.12, 0.32]} color="#7c2d12" />
-      <InstancedBoxes transforms={backTransforms} args={[1.2, 0.32, 0.1]} color="#92400e" />
-    </>
-  );
-}
 
 function SearchGlowMarker({ position, isVisible, isSelected }) {
   const groupRef = useRef();
@@ -1338,7 +1357,7 @@ function SearchGlowMarker({ position, isVisible, isSelected }) {
   );
 }
 
-function RoadBillboard({ road, index, isNight }) {
+function RoadBillboard({ road, index, isNight, performanceMode }) {
   const side = index % 2 === 0 ? -1 : 1;
   const signX = road.centerX + side * 3.25;
   const signZ = -3.2;
@@ -1370,27 +1389,31 @@ function RoadBillboard({ road, index, isNight }) {
         {road.short}
       </Text>
 
-      <Text
-        position={[0, 2.56, 0.09]}
-        fontSize={0.14}
-        color="#f8fafc"
-        anchorX="center"
-        anchorY="middle"
-        maxWidth={3.1}
-      >
-        {road.label}
-      </Text>
+      {!performanceMode && (
+  <>
+    <Text
+      position={[0, 2.56, 0.09]}
+      fontSize={0.14}
+      color="#f8fafc"
+      anchorX="center"
+      anchorY="middle"
+      maxWidth={3.1}
+    >
+      {road.label}
+    </Text>
 
-      <Text
-        position={[0, 2.25, 0.09]}
-        fontSize={0.12}
-        color="#fde68a"
-        anchorX="center"
-        anchorY="middle"
-        maxWidth={3.1}
-      >
-        This road leads to {road.key}
-      </Text>
+    <Text
+      position={[0, 2.25, 0.09]}
+      fontSize={0.12}
+      color="#fde68a"
+      anchorX="center"
+      anchorY="middle"
+      maxWidth={3.1}
+    >
+      This road leads to {road.key}
+    </Text>
+  </>
+)}
     </group>
   );
 }
@@ -1456,7 +1479,7 @@ function createDecorations(layout, performanceMode) {
   const bushes = [];
   const lamps = [];
   const grass = [];
-  const benches = [];
+  
   const students = [];
 
   const zStart = -layout.cityHalfLength - 2;
@@ -1548,12 +1571,7 @@ function createDecorations(layout, performanceMode) {
         addScenery(lamps, road.centerX + 2.9, z);
       }
 
-      if (!performanceMode) {
-        for (let z = road.zMin + 18; z <= road.zMax - 18; z += 34) {
-          addScenery(benches, road.centerX - 3.25, z);
-          addScenery(benches, road.centerX + 3.25, z + 8);
-        }
-      }
+      
 
       for (let z = road.zMin + 18; z <= road.zMax - 18; z += studentStep) {
         const walkDistance = performanceMode ? 1.15 : 1.55;
@@ -1587,7 +1605,6 @@ function createDecorations(layout, performanceMode) {
     bushes,
     lamps,
     grass,
-    benches,
     students
   };
 }
@@ -1789,11 +1806,21 @@ function MiniMapHud({
   hasActiveFilter,
   selectFaculty
 }) {
-  const [carPosition, setCarPosition] = useState({ x: 0, z: 0 });
+  const [carState, setCarState] = useState({
+    x: 0,
+    z: 0,
+    angle: 0
+  });
 
   useEffect(() => {
     function handleTelemetry(event) {
-      setCarPosition(event.detail.carPosition || { x: 0, z: 0 });
+      const carPosition = event.detail.carPosition || { x: 0, z: 0 };
+
+      setCarState({
+        x: carPosition.x,
+        z: carPosition.z,
+        angle: event.detail.carAngle || 0
+      });
     }
 
     window.addEventListener("facultycity-telemetry", handleTelemetry);
@@ -1803,20 +1830,39 @@ function MiniMapHud({
     };
   }, []);
 
-  const width = 250;
-  const height = 170;
+  const size = 220;
+  const center = size / 2;
 
-  const minX = layout.minX - 8;
-  const maxX = layout.maxX + 8;
-  const minZ = -layout.cityHalfLength - 8;
-  const maxZ = layout.cityHalfLength + 8;
+  // Smaller number = more zoomed in.
+  // Increase to 45 if you want to see more surrounding roads.
+  // Decrease to 28 if you want a more game-like close radar.
+  const viewRadiusWorld = 36;
+
+  const scale = (size * 0.46) / viewRadiusWorld;
 
   function mapX(x) {
-    return ((x - minX) / (maxX - minX)) * width;
+    return center + (x - carState.x) * scale;
   }
 
   function mapY(z) {
-    return ((z - minZ) / (maxZ - minZ)) * height;
+    return center + (z - carState.z) * scale;
+  }
+
+  function isRoadNearMinimap(road) {
+    return (
+      road.xMax >= carState.x - viewRadiusWorld &&
+      road.xMin <= carState.x + viewRadiusWorld &&
+      road.zMax >= carState.z - viewRadiusWorld &&
+      road.zMin <= carState.z + viewRadiusWorld
+    );
+  }
+
+  function isBuildingNearMinimap(position) {
+    const [x, , z] = position;
+    const dx = x - carState.x;
+    const dz = z - carState.z;
+
+    return dx * dx + dz * dz <= viewRadiusWorld * viewRadiusWorld;
   }
 
   return (
@@ -1826,83 +1872,730 @@ function MiniMapHud({
         left: 24,
         bottom: 24,
         zIndex: 18,
-        width,
-        height,
-        background: "rgba(255,255,255,0.9)",
-        borderRadius: 14,
-        border: "2px solid #111827",
+        width: size,
+        height: size,
+        background: "rgba(255,255,255,0.92)",
+        borderRadius: "50%",
+        border: "3px solid #111827",
         overflow: "hidden",
-        boxShadow: "0 12px 30px rgba(0,0,0,0.2)"
+        boxShadow: "0 12px 30px rgba(0,0,0,0.25)"
       }}
     >
-      <svg width={width} height={height}>
-        {layout.roadRects.map((road, index) => {
-          const x = mapX(road.xMin);
-          const y = mapY(road.zMin);
-          const w = mapX(road.xMax) - mapX(road.xMin);
-          const h = mapY(road.zMax) - mapY(road.zMin);
+      <svg width={size} height={size}>
+        <defs>
+          <clipPath id="local-minimap-circle-clip">
+            <circle cx={center} cy={center} r={size / 2 - 4} />
+          </clipPath>
+        </defs>
 
-          return (
-            <rect
-              key={index}
-              x={x}
-              y={y}
-              width={w}
-              height={h}
-              fill={road.type === "vertical" ? road.color : "#111827"}
-              opacity={road.type === "vertical" ? 0.8 : 1}
-              rx="2"
-            />
-          );
-        })}
-
-        {layout.buildings.map(({ faculty, position, districtKey }) => {
-          const [x, , z] = position;
-          const isSelected = selectedFaculty?.id === faculty.id;
-          const isMatched = matchSet.has(faculty.id);
-          const isDimmed = hasActiveFilter && !isMatched;
-
-          return (
-            <circle
-              key={faculty.id}
-              cx={mapX(x)}
-              cy={mapY(z)}
-              r={isSelected ? 4.5 : isMatched && hasActiveFilter ? 3.8 : 2.8}
-              fill={isSelected ? "#ef4444" : getDistrictColor(districtKey)}
-              opacity={isDimmed ? 0.22 : 1}
-              stroke="#111827"
-              strokeWidth={isSelected ? 1.5 : 0.7}
-              style={{ cursor: "pointer" }}
-              onClick={() => {
-                setSelectedFaculty(faculty);
-                selectFaculty(faculty);
-              }}
-            />
-          );
-        })}
-
-        <polygon
-          points={`
-            ${mapX(carPosition.x)},${mapY(carPosition.z) - 6}
-            ${mapX(carPosition.x) - 5},${mapY(carPosition.z) + 5}
-            ${mapX(carPosition.x) + 5},${mapY(carPosition.z) + 5}
-          `}
-          fill="#2563eb"
-          stroke="white"
-          strokeWidth="2"
+        <circle
+          cx={center}
+          cy={center}
+          r={size / 2}
+          fill="rgba(248,250,252,0.96)"
         />
+
+        <g clipPath="url(#local-minimap-circle-clip)">
+          <circle
+            cx={center}
+            cy={center}
+            r={size / 2 - 4}
+            fill="#ecfdf5"
+          />
+
+          {layout.roadRects
+            .filter(isRoadNearMinimap)
+            .map((road, index) => {
+              const x = mapX(road.xMin);
+              const y = mapY(road.zMin);
+              const w = (road.xMax - road.xMin) * scale;
+              const h = (road.zMax - road.zMin) * scale;
+
+              return (
+                <rect
+                  key={`${road.key}-${index}`}
+                  x={x}
+                  y={y}
+                  width={w}
+                  height={h}
+                  fill={road.type === "vertical" ? road.color : "#111827"}
+                  opacity={road.type === "vertical" ? 0.85 : 1}
+                  rx="3"
+                />
+              );
+            })}
+
+          {layout.buildings
+            .filter(({ position }) => isBuildingNearMinimap(position))
+            .map(({ faculty, position, districtKey }, index) => {
+              const [x, , z] = position;
+              const facultyId = getFacultyId(faculty, index);
+              const selectedId = selectedFaculty ? getFacultyId(selectedFaculty) : "";
+
+              const isSelected = selectedId === facultyId;
+              const isMatched = matchSet.has(facultyId);
+              const isDimmed = hasActiveFilter && !isMatched;
+
+              return (
+                <circle
+                  key={facultyId}
+                  cx={mapX(x)}
+                  cy={mapY(z)}
+                  r={isSelected ? 6 : isMatched && hasActiveFilter ? 5 : 3.8}
+                  fill={isSelected ? "#ef4444" : getDistrictColor(districtKey)}
+                  opacity={isDimmed ? 0.22 : 1}
+                  stroke="#111827"
+                  strokeWidth={isSelected ? 1.8 : 0.8}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => {
+                    setSelectedFaculty(faculty);
+                    selectFaculty(faculty);
+                  }}
+                />
+              );
+            })}
+
+          {/* car radar glow */}
+          <circle
+            cx={center}
+            cy={center}
+            r="18"
+            fill="#dbeafe"
+            stroke="#ffffff"
+            strokeWidth="2"
+            opacity="0.9"
+          />
+
+          {/* car direction triangle */}
+          <g>
+  <polygon
+    points={`
+      ${center},${center - 18}
+      ${center - 13},${center + 13}
+      ${center + 13},${center + 13}
+    `}
+    fill="#2563eb"
+    stroke="white"
+    strokeWidth="3"
+  />
+
+  <circle
+    cx={center}
+    cy={center}
+    r="3.5"
+    fill="#ffffff"
+  />
+</g>
+
+          {/* center guide lines */}
+          <line
+            x1={center - 28}
+            y1={center}
+            x2={center - 20}
+            y2={center}
+            stroke="#111827"
+            strokeWidth="2"
+            opacity="0.55"
+          />
+
+          <line
+            x1={center + 20}
+            y1={center}
+            x2={center + 28}
+            y2={center}
+            stroke="#111827"
+            strokeWidth="2"
+            opacity="0.55"
+          />
+
+          <line
+            x1={center}
+            y1={center - 28}
+            x2={center}
+            y2={center - 20}
+            stroke="#111827"
+            strokeWidth="2"
+            opacity="0.55"
+          />
+
+          <line
+            x1={center}
+            y1={center + 20}
+            x2={center}
+            y2={center + 28}
+            stroke="#111827"
+            strokeWidth="2"
+            opacity="0.55"
+          />
+        </g>
       </svg>
     </div>
   );
 }
 
-function ResultButton({ result, onSelect, mode }) {
-  const faculty = result.faculty;
-  const thesis = result.thesis || getThesisFlags(faculty);
+function hasUsefulValue(value) {
+  if (value === null || value === undefined) return false;
+
+  if (Array.isArray(value)) {
+    return value.some((item) => hasUsefulValue(item));
+  }
+
+  const text = String(value).trim().toLowerCase();
 
   return (
-    <button
+    text !== "" &&
+    text !== "data not given" &&
+    text !== "not given" &&
+    text !== "n/a" &&
+    text !== "na" &&
+    text !== "null" &&
+    text !== "undefined"
+  );
+}
+
+function getDisplayText(value) {
+  if (!hasUsefulValue(value)) return "Data not given";
+  return String(value).trim();
+}
+
+function getFacultyResearchText(faculty) {
+  return toArray(faculty.researchInterests).join(", ") || "Data not given";
+}
+
+function getFacultyCoursesText(faculty) {
+  return toArray(faculty.courses).slice(0, 4).join(", ") || "Data not given";
+}
+
+function getProfileCompleteness(faculty) {
+  const fields = [
+    faculty.name,
+    faculty.code,
+    faculty.designation || faculty.role,
+    faculty.email,
+    faculty.biography,
+    faculty.researchInterests,
+    faculty.publications,
+    faculty.courses,
+    faculty.thesisStatus,
+    faculty.supervisionLevel,
+    faculty.supervisionType,
+    faculty.websites,
+    faculty.profileUrl,
+    faculty.education
+  ];
+
+  const filled = fields.filter(hasUsefulValue).length;
+
+  return Math.round((filled / fields.length) * 100);
+}
+
+function buildCityStats(facultyList) {
+  const designationCounts = {};
+  const researchCounts = new Map();
+
+  let accepting = 0;
+  let acceptingUG = 0;
+  let acceptingPG = 0;
+  let withPublications = 0;
+  let missingBio = 0;
+  let missingResearch = 0;
+  let missingThesis = 0;
+  let totalPublications = 0;
+  let topPublicationFaculty = null;
+
+  for (const faculty of facultyList) {
+    const designation = getDistrictKey(faculty);
+    designationCounts[designation] = (designationCounts[designation] || 0) + 1;
+
+    const thesis = getThesisFlags(faculty);
+    if (thesis.accepting) accepting += 1;
+    if (thesis.acceptsUG) acceptingUG += 1;
+    if (thesis.acceptsPG) acceptingPG += 1;
+
+    const publicationCount = getPublicationCount(faculty);
+    totalPublications += publicationCount;
+
+    if (publicationCount > 0) withPublications += 1;
+
+    if (
+      !topPublicationFaculty ||
+      publicationCount > topPublicationFaculty.publicationCount
+    ) {
+      topPublicationFaculty = {
+        faculty,
+        publicationCount
+      };
+    }
+
+    if (!hasUsefulValue(faculty.biography)) missingBio += 1;
+    if (!hasUsefulValue(faculty.researchInterests)) missingResearch += 1;
+    if (!hasUsefulValue(faculty.thesisStatus)) missingThesis += 1;
+
+    for (const interest of toArray(faculty.researchInterests)) {
+      const cleaned = interest.trim();
+
+      if (
+        cleaned &&
+        cleaned.length <= 40 &&
+        !cleaned.toLowerCase().includes("data not given")
+      ) {
+        researchCounts.set(cleaned, (researchCounts.get(cleaned) || 0) + 1);
+      }
+    }
+  }
+
+  const topResearchAreas = Array.from(researchCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([name, count]) => ({ name, count }));
+
+  return {
+    totalFaculty: facultyList.length,
+    designationCounts,
+    accepting,
+    acceptingUG,
+    acceptingPG,
+    withPublications,
+    missingBio,
+    missingResearch,
+    missingThesis,
+    totalPublications,
+    topPublicationFaculty,
+    topResearchAreas
+  };
+}
+
+function getThesisMatchExplanation(result) {
+  const faculty = result.faculty;
+  const thesis = result.thesis || getThesisFlags(faculty);
+  const explanations = [];
+
+  if (thesis.accepting) {
+    explanations.push("Accepting thesis supervision");
+  }
+
+  if (thesis.acceptsUG && thesis.acceptsPG) {
+    explanations.push("Available for both UG and PG supervision");
+  } else if (thesis.acceptsUG) {
+    explanations.push("Available for undergraduate supervision");
+  } else if (thesis.acceptsPG) {
+    explanations.push("Available for postgraduate supervision");
+  }
+
+  if (result.publicationCount > 0) {
+    explanations.push(`${result.publicationCount} publication(s) found`);
+  }
+
+  if (result.reasons?.length > 0) {
+    explanations.push(...result.reasons.map((reason) => `Matched ${reason}`));
+  }
+
+  if (toArray(faculty.researchInterests).length > 0) {
+    explanations.push("Has listed research interests");
+  }
+
+  return Array.from(new Set(explanations)).slice(0, 5);
+}
+
+function getThesisMatchPercent(result) {
+  if (Number.isFinite(result.matchPercent)) {
+    return result.matchPercent;
+  }
+
+  const thesis = result.thesis || getThesisFlags(result.faculty);
+  let score = 20;
+
+  if (thesis.accepting) score += 35;
+  if (thesis.acceptsUG) score += 10;
+  if (thesis.acceptsPG) score += 10;
+  if (result.publicationCount > 0) score += Math.min(15, result.publicationCount * 2);
+  if (result.reasons?.length > 0) score += Math.min(10, result.reasons.length * 3);
+
+  return Math.min(100, score);
+}
+
+function CityStatsPanel({ stats, onClose }) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 92,
+        left: 430,
+        zIndex: 24,
+        width: 430,
+        maxHeight: "78vh",
+        overflowY: "auto",
+        background: "rgba(255,255,255,0.97)",
+        borderRadius: 16,
+        padding: 16,
+        boxShadow: "0 16px 45px rgba(0,0,0,0.25)",
+        fontFamily: "Arial"
+      }}
+    >
+      <button
+        onClick={onClose}
+        style={{
+          position: "absolute",
+          top: 10,
+          right: 10,
+          border: "none",
+          borderRadius: 999,
+          width: 24,
+          height: 24,
+          background: "#ef4444",
+          color: "white",
+          fontWeight: 900,
+          cursor: "pointer"
+        }}
+      >
+        ×
+      </button>
+
+      <h2 style={{ margin: "0 0 12px" }}>Faculty Data Dashboard</h2>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 10
+        }}
+      >
+        <DashboardTile label="Total Faculty" value={stats.totalFaculty} />
+        <DashboardTile label="Accepting Thesis" value={stats.accepting} />
+        <DashboardTile label="UG Accepting" value={stats.acceptingUG} />
+        <DashboardTile label="PG Accepting" value={stats.acceptingPG} />
+        <DashboardTile label="With Publications" value={stats.withPublications} />
+        <DashboardTile label="Total Publications" value={stats.totalPublications} />
+      </div>
+
+      <h3 style={{ margin: "16px 0 8px", fontSize: 15 }}>Designation Breakdown</h3>
+
+      {Object.entries(stats.designationCounts).map(([designation, count]) => (
+        <div
+          key={designation}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            padding: "6px 0",
+            borderBottom: "1px solid #e5e7eb",
+            fontSize: 13
+          }}
+        >
+          <span>{designation}</span>
+          <b>{count}</b>
+        </div>
+      ))}
+
+      <h3 style={{ margin: "16px 0 8px", fontSize: 15 }}>Top Research Areas</h3>
+
+      {stats.topResearchAreas.length ? (
+        stats.topResearchAreas.map((area) => (
+          <div
+            key={area.name}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              padding: "6px 0",
+              borderBottom: "1px solid #e5e7eb",
+              fontSize: 13
+            }}
+          >
+            <span>{area.name}</span>
+            <b>{area.count}</b>
+          </div>
+        ))
+      ) : (
+        <p style={{ color: "#64748b", fontSize: 13 }}>No research-area data found.</p>
+      )}
+
+      <h3 style={{ margin: "16px 0 8px", fontSize: 15 }}>Data Quality</h3>
+
+      <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+        <div>Missing biography: <b>{stats.missingBio}</b></div>
+        <div>Missing research interests: <b>{stats.missingResearch}</b></div>
+        <div>Missing thesis status: <b>{stats.missingThesis}</b></div>
+      </div>
+
+      {stats.topPublicationFaculty && (
+        <>
+          <h3 style={{ margin: "16px 0 8px", fontSize: 15 }}>
+            Highest Publication Count
+          </h3>
+
+          <div
+            style={{
+              background: "#f8fafc",
+              border: "1px solid #e5e7eb",
+              borderRadius: 12,
+              padding: 10,
+              fontSize: 13
+            }}
+          >
+            <b>{stats.topPublicationFaculty.faculty.name}</b>
+            <div style={{ color: "#475569", marginTop: 4 }}>
+              {stats.topPublicationFaculty.faculty.code || "No code"} ·{" "}
+              {stats.topPublicationFaculty.publicationCount} publication(s)
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DashboardTile({ label, value }) {
+  return (
+    <div
+      style={{
+        background: "#f8fafc",
+        border: "1px solid #e5e7eb",
+        borderRadius: 12,
+        padding: 10
+      }}
+    >
+      <div style={{ fontSize: 11, color: "#64748b", fontWeight: 800 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 25, fontWeight: 900, color: "#0f172a" }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function CompareFacultyPanel({
+  compareList,
+  onRemove,
+  onClear,
+  onViewFaculty
+}) {
+  if (!compareList.length) {
+    return (
+      <div
+        style={{
+          marginTop: 10,
+          padding: 12,
+          background: "#f8fafc",
+          border: "1px solid #e5e7eb",
+          borderRadius: 12,
+          fontSize: 13,
+          color: "#475569"
+        }}
+      >
+        No faculty selected. Search below and add faculty to compare.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+        <b style={{ fontSize: 13 }}>
+          Comparing {compareList.length} faculty
+        </b>
+
+        <button
+          onClick={onClear}
+          style={{
+            border: "none",
+            borderRadius: 8,
+            padding: "5px 8px",
+            background: "#fee2e2",
+            color: "#991b1b",
+            fontWeight: 800,
+            cursor: "pointer",
+            fontSize: 11
+          }}
+        >
+          Clear
+        </button>
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <table
+          style={{
+            width: "100%",
+            borderCollapse: "collapse",
+            fontSize: 11,
+            background: "white"
+          }}
+        >
+          <thead>
+            <tr>
+              <CompareHeader label="Field" />
+              {compareList.map((faculty) => (
+                <CompareHeader
+                  key={faculty.id}
+                  label={faculty.code || faculty.name || "Faculty"}
+                />
+              ))}
+            </tr>
+          </thead>
+
+          <tbody>
+            <CompareRow
+              label="Name"
+              values={compareList.map((faculty) => getDisplayText(faculty.name))}
+            />
+
+            <CompareRow
+              label="Designation"
+              values={compareList.map((faculty) =>
+                getDisplayText(faculty.designation || faculty.role)
+              )}
+            />
+
+            <CompareRow
+              label="Thesis"
+              values={compareList.map((faculty) =>
+                getDisplayText(faculty.thesisStatus)
+              )}
+            />
+
+            <CompareRow
+              label="Level"
+              values={compareList.map((faculty) =>
+                getDisplayText(faculty.supervisionLevel)
+              )}
+            />
+
+            <CompareRow
+              label="Publications"
+              values={compareList.map((faculty) =>
+                String(getPublicationCount(faculty))
+              )}
+            />
+
+            <CompareRow
+              label="Research"
+              values={compareList.map((faculty) =>
+                getFacultyResearchText(faculty)
+              )}
+            />
+
+            <CompareRow
+              label="Courses"
+              values={compareList.map((faculty) =>
+                getFacultyCoursesText(faculty)
+              )}
+            />
+
+            <CompareRow
+              label="Profile"
+              values={compareList.map((faculty) =>
+                `${getProfileCompleteness(faculty)}% complete`
+              )}
+            />
+
+            <tr>
+              <CompareCell label="Actions" strong />
+              {compareList.map((faculty) => (
+                <td
+                  key={`${faculty.id}-actions`}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    padding: 7,
+                    verticalAlign: "top"
+                  }}
+                >
+                  <button
+                    onClick={() => onViewFaculty(faculty)}
+                    style={{
+                      width: "100%",
+                      border: "none",
+                      borderRadius: 7,
+                      padding: "5px 6px",
+                      background: "#dbeafe",
+                      color: "#1d4ed8",
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      fontSize: 11,
+                      marginBottom: 5
+                    }}
+                  >
+                    View
+                  </button>
+
+                  <button
+                    onClick={() => onRemove(faculty.id)}
+                    style={{
+                      width: "100%",
+                      border: "none",
+                      borderRadius: 7,
+                      padding: "5px 6px",
+                      background: "#fee2e2",
+                      color: "#991b1b",
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      fontSize: 11
+                    }}
+                  >
+                    Remove
+                  </button>
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function CompareHeader({ label }) {
+  return (
+    <th
+      style={{
+        border: "1px solid #cbd5e1",
+        background: "#f1f5f9",
+        padding: 7,
+        textAlign: "left",
+        fontSize: 11
+      }}
+    >
+      {label}
+    </th>
+  );
+}
+
+function CompareCell({ label, strong = false }) {
+  return (
+    <td
+      style={{
+        border: "1px solid #e5e7eb",
+        padding: 7,
+        verticalAlign: "top",
+        fontWeight: strong ? 900 : 500,
+        color: "#111827"
+      }}
+    >
+      {label}
+    </td>
+  );
+}
+
+function CompareRow({ label, values }) {
+  return (
+    <tr>
+      <CompareCell label={label} strong />
+      {values.map((value, index) => (
+        <CompareCell key={`${label}-${index}`} label={value} />
+      ))}
+    </tr>
+  );
+}
+
+function ResultButton({ result, onSelect, onCompare, mode }) {
+  const faculty = result.faculty;
+  const thesis = result.thesis || getThesisFlags(faculty);
+  const thesisMatchPercent = getThesisMatchPercent(result);
+  const thesisExplanation = getThesisMatchExplanation(result);
+
+  return (
+    <div
       onClick={() => onSelect(faculty)}
+      role="button"
+      tabIndex={0}
       style={{
         width: "100%",
         textAlign: "left",
@@ -1911,15 +2604,22 @@ function ResultButton({ result, onSelect, mode }) {
         borderRadius: 10,
         padding: "8px 9px",
         marginBottom: 7,
-        cursor: "pointer"
+        cursor: "pointer",
+        boxSizing: "border-box"
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-        <b style={{ fontSize: 12 }}>{faculty.code || "?"} — {faculty.name}</b>
+        <b style={{ fontSize: 12 }}>
+          {faculty.code || "?"} — {faculty.name}
+        </b>
 
         {mode === "recommend" ? (
           <span style={{ fontSize: 11, fontWeight: 900, color: "#16a34a" }}>
             {result.matchPercent}%
+          </span>
+        ) : mode === "thesis" ? (
+          <span style={{ fontSize: 11, fontWeight: 900, color: "#7c3aed" }}>
+            {thesisMatchPercent}% match
           </span>
         ) : (
           <span style={{ fontSize: 11, fontWeight: 900, color: "#2563eb" }}>
@@ -1941,17 +2641,82 @@ function ResultButton({ result, onSelect, mode }) {
         {thesis.acceptsPG ? " · PG" : ""}
       </div>
 
-      {result.reasons?.length > 0 && (
+      {mode === "thesis" && thesisExplanation.length > 0 && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: "6px 7px",
+            borderRadius: 8,
+            background: "#f8fafc",
+            border: "1px solid #e5e7eb"
+          }}
+        >
+          <div style={{ fontSize: 10.5, fontWeight: 900, marginBottom: 4 }}>
+            Why this match:
+          </div>
+
+          {thesisExplanation.map((item, index) => (
+            <div
+              key={`${faculty.id}-explanation-${index}`}
+              style={{ fontSize: 10.5, color: "#475569", lineHeight: 1.35 }}
+            >
+              ✓ {item}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {mode !== "thesis" && result.reasons?.length > 0 && (
         <div style={{ fontSize: 10.5, color: "#64748b", marginTop: 4 }}>
           {result.reasons.join(" · ")}
         </div>
       )}
-    </button>
+
+      {onCompare && (
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            onCompare(faculty);
+          }}
+          style={{
+            marginTop: 7,
+            border: "none",
+            borderRadius: 8,
+            padding: "6px 8px",
+            background: "#e0f2fe",
+            color: "#075985",
+            fontWeight: 900,
+            cursor: "pointer",
+            fontSize: 11
+          }}
+        >
+          Add to Compare
+        </button>
+      )}
+    </div>
   );
 }
 
+function useDebouncedValue(value, delay = 180) {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebounced(value);
+    }, delay);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [value, delay]);
+
+  return debounced;
+}
+
+
+
 export default function CityScene() {
-  const [facultyList, setFacultyList] = useState(facultyData);
+  const [facultyList] = useState(() => prepareFacultyData(facultyData));
   const [selectedFaculty, setSelectedFaculty] = useState(null);
   const [isNight, setIsNight] = useState(false);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
@@ -1972,29 +2737,22 @@ export default function CityScene() {
     minPublications: 0,
     acceptingOnly: true
   });
+  const [showDashboard, setShowDashboard] = useState(false);
+const [compareList, setCompareList] = useState([]);
+const [compareSearch, setCompareSearch] = useState("");
+  const debouncedSearchTerm = useDebouncedValue(searchTerm, 180);
+  const debouncedRecommendQuery = useDebouncedValue(recommendQuery, 180);
+  const debouncedThesisTopic = useDebouncedValue(thesisFinder.topic, 180);
 
-  useEffect(() => {
-    let cancelled = false;
+  const debouncedThesisFinder = useMemo(
+  () => ({
+    ...thesisFinder,
+    topic: debouncedThesisTopic
+  }),
+  [thesisFinder, debouncedThesisTopic]
+  );
 
-    async function loadFacultyFromBackend() {
-      try {
-        const response = await fetch(`${EDIT_API_BASE}/api/faculty`);
-        const result = await response.json();
-
-        if (!cancelled && response.ok && result.ok && Array.isArray(result.faculty)) {
-          setFacultyList(result.faculty);
-        }
-      } catch {
-        // Backend may be off. Imported faculty.json will still be used.
-      }
-    }
-
-    loadFacultyFromBackend();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  
 
   const layout = useMemo(() => buildCityLayout(facultyList), [facultyList]);
 
@@ -2007,29 +2765,55 @@ export default function CityScene() {
     return buildInterestSuggestions(facultyList);
   }, [facultyList]);
 
+const dashboardStats = useMemo(() => {
+  return buildCityStats(facultyList);
+}, [facultyList]);
+
+const compareSearchResults = useMemo(() => {
+  const query = compareSearch.trim().toLowerCase();
+
+  if (!query) return [];
+
+  return facultyList
+    .filter((faculty) => {
+      const searchable = [
+        faculty.name,
+        faculty.code,
+        faculty.designation,
+        faculty.email,
+        toArray(faculty.researchInterests).join(" ")
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return searchable.includes(query);
+    })
+    .slice(0, 8);
+}, [facultyList, compareSearch]);
+
   const normalMatchedFaculty = useMemo(() => {
-    return facultyList.filter((faculty) =>
-      isFacultyMatch(faculty, searchTerm, designationFilter, thesisFilter)
-    );
-  }, [facultyList, searchTerm, designationFilter, thesisFilter]);
+  return facultyList.filter((faculty) =>
+    isFacultyMatch(faculty, debouncedSearchTerm, designationFilter, thesisFilter)
+  );
+}, [facultyList, debouncedSearchTerm, designationFilter, thesisFilter]);
 
   const recommendationResults = useMemo(() => {
-    if (!recommendQuery.trim()) return [];
+  if (!debouncedRecommendQuery.trim()) return [];
 
-    return facultyList
-      .map((faculty) => scoreFacultyRecommendation(faculty, recommendQuery))
-      .filter(Boolean)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 20);
-  }, [facultyList, recommendQuery]);
+  return facultyList
+    .map((faculty) => scoreFacultyRecommendation(faculty, debouncedRecommendQuery))
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 20);
+}, [facultyList, debouncedRecommendQuery]);
 
   const thesisFinderResults = useMemo(() => {
-    return facultyList
-      .map((faculty) => scoreFacultyForThesisFinder(faculty, thesisFinder))
-      .filter(Boolean)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 30);
-  }, [facultyList, thesisFinder]);
+  return facultyList
+    .map((faculty) => scoreFacultyForThesisFinder(faculty, debouncedThesisFinder))
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 30);
+}, [facultyList, debouncedThesisFinder]);
 
   const activeMatchedFaculty = useMemo(() => {
     if (smartMode === "recommend" && recommendQuery.trim()) {
@@ -2060,15 +2844,6 @@ export default function CityScene() {
     designationFilter !== "All" ||
     thesisFilter !== "All";
 
-  const handleUpdateFaculty = useCallback((updatedFaculty) => {
-    setFacultyList((previousList) =>
-      previousList.map((faculty) =>
-        faculty.id === updatedFaculty.id ? updatedFaculty : faculty
-      )
-    );
-
-    setSelectedFaculty(updatedFaculty);
-  }, []);
 
   const selectFaculty = useCallback(
     (faculty) => {
@@ -2096,10 +2871,32 @@ export default function CityScene() {
     [layout]
   );
 
-  const startRoad = layout.roadRects.find((road) => road.type === "vertical");
-  const carStartPosition = startRoad ? [startRoad.centerX, 0.25, 0] : [0, 0.25, 0];
+  function addToCompare(faculty) {
+  setCompareList((previous) => {
+    const alreadyExists = previous.some((item) => item.id === faculty.id);
 
-  const activeCount = activeMatchedFaculty.length;
+    if (alreadyExists) return previous;
+
+    return [...previous, faculty].slice(0, 3);
+  });
+}
+
+function removeFromCompare(facultyId) {
+  setCompareList((previous) =>
+    previous.filter((faculty) => faculty.id !== facultyId)
+  );
+}
+
+function clearCompareList() {
+  setCompareList([]);
+}
+
+const startRoad = layout.roadRects.find((road) => road.type === "vertical");
+const carStartPosition = startRoad ? [startRoad.centerX, 0.25, 0] : [0, 0.25, 0];
+
+
+
+const activeCount = activeMatchedFaculty.length;
 
   return (
     <div
@@ -2222,6 +3019,21 @@ export default function CityScene() {
             >
               Edit Player
             </button>
+<button
+  onClick={() => setShowDashboard(true)}
+  style={{
+    padding: "8px 10px",
+    border: "none",
+    borderRadius: 8,
+    background: "#ede9fe",
+    color: "#5b21b6",
+    fontWeight: "bold",
+    cursor: "pointer"
+  }}
+>
+  City Stats
+</button>
+            
           </div>
 
           <div
@@ -2237,7 +3049,8 @@ export default function CityScene() {
             {[
               ["explore", "Explore"],
               ["recommend", "Recommend"],
-              ["thesis", "Thesis Finder"]
+              ["thesis", "Thesis Finder"],
+              ["compare", "Compare"]
             ].map(([mode, label]) => (
               <button
                 key={mode}
@@ -2356,13 +3169,14 @@ export default function CityScene() {
               <div style={{ maxHeight: 210, overflowY: "auto", paddingRight: 2 }}>
                 {recommendQuery.trim() ? (
                   recommendationResults.length ? (
-                    recommendationResults.slice(0, 8).map((result) => (
+                    recommendationResults.slice(0, 8).map((result, index) => (
                       <ResultButton
-                        key={result.faculty.id}
+                        key={getFacultyId(result.faculty, index)}
                         result={result}
                         onSelect={selectFaculty}
+                        onCompare={addToCompare}
                         mode="recommend"
-                      />
+                                        />
                     ))
                   ) : (
                     <p style={{ fontSize: 12, color: "#64748b" }}>
@@ -2497,13 +3311,14 @@ export default function CityScene() {
 
               <div style={{ maxHeight: 230, overflowY: "auto", paddingRight: 2 }}>
                 {thesisFinderResults.length ? (
-                  thesisFinderResults.slice(0, 10).map((result) => (
+                  thesisFinderResults.slice(0, 10).map((result, index) => (
                     <ResultButton
-                      key={result.faculty.id}
-                      result={result}
-                      onSelect={selectFaculty}
-                      mode="thesis"
-                    />
+  key={getFacultyId(result.faculty, index)}
+  result={result}
+  onSelect={selectFaculty}
+  onCompare={addToCompare}
+  mode="thesis"
+/>
                   ))
                 ) : (
                   <p style={{ fontSize: 12, color: "#64748b" }}>
@@ -2514,11 +3329,98 @@ export default function CityScene() {
             </div>
           )}
 
+          {smartMode === "compare" && (
+  <div>
+    <h3 style={{ margin: "8px 0 6px", fontSize: 15 }}>
+      Compare Faculty
+    </h3>
+
+    <p style={{ margin: "0 0 8px", fontSize: 12, color: "#475569" }}>
+      Add up to 3 faculty and compare thesis status, research, publications,
+      courses, and profile completeness.
+    </p>
+
+    <input
+      value={compareSearch}
+      onChange={(event) => setCompareSearch(event.target.value)}
+      placeholder="Search faculty to compare..."
+      style={{
+        width: "100%",
+        padding: "8px 10px",
+        borderRadius: 8,
+        border: "1px solid #cbd5e1",
+        marginBottom: 8
+      }}
+    />
+
+    {compareSearchResults.length > 0 && (
+      <div style={{ maxHeight: 180, overflowY: "auto", marginBottom: 10 }}>
+        {compareSearchResults.map((faculty) => (
+          <div
+            key={faculty.id}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 8,
+              alignItems: "center",
+              padding: "7px 8px",
+              border: "1px solid #e5e7eb",
+              borderRadius: 9,
+              marginBottom: 6,
+              background: "white"
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 900 }}>
+                {faculty.code || "?"} — {faculty.name}
+              </div>
+              <div style={{ fontSize: 11, color: "#64748b" }}>
+                {faculty.designation || faculty.role || "Data not given"}
+              </div>
+            </div>
+
+            <button
+              onClick={() => addToCompare(faculty)}
+              disabled={compareList.length >= 3}
+              style={{
+                border: "none",
+                borderRadius: 8,
+                padding: "6px 8px",
+                background: compareList.length >= 3 ? "#e5e7eb" : "#2563eb",
+                color: compareList.length >= 3 ? "#64748b" : "white",
+                fontWeight: 900,
+                cursor: compareList.length >= 3 ? "not-allowed" : "pointer",
+                fontSize: 11
+              }}
+            >
+              Add
+            </button>
+          </div>
+        ))}
+      </div>
+    )}
+
+    <CompareFacultyPanel
+      compareList={compareList}
+      onRemove={removeFromCompare}
+      onClear={clearCompareList}
+      onViewFaculty={selectFaculty}
+    />
+  </div>
+)}
+
           <p style={{ margin: "10px 0 0", fontSize: 12 }}>
             Highlighting {activeCount} faculty out of {facultyList.length}
           </p>
         </div>
       )}
+
+      {showDashboard && (
+  <CityStatsPanel
+    stats={dashboardStats}
+    onClose={() => setShowDashboard(false)}
+  />
+)}
 
       <MiniMapHud
         layout={layout}
@@ -2532,7 +3434,7 @@ export default function CityScene() {
       <SpeedHud />
 
       <Canvas
-        dpr={performanceMode ? [0.75, 1] : [1, 1.5]}
+        dpr={performanceMode ? [0.5, 0.75] : [0.9, 1.2]}
         gl={{
           antialias: !performanceMode,
           powerPreference: "high-performance",
@@ -2562,10 +3464,21 @@ export default function CityScene() {
         <RoadCurbs layout={layout} />
         <RoadStripes layout={layout} isNight={isNight} />
 
-        <GrassPatches positions={decorations.grass} />
-        <InstancedTrees positions={decorations.trees} />
-        <InstancedBushes positions={decorations.bushes} />
-        <StudentFigures students={decorations.students} />
+        {!performanceMode && (
+  <>
+    <GrassPatches positions={decorations.grass} />
+    <InstancedTrees positions={decorations.trees} />
+    <InstancedBushes positions={decorations.bushes} />
+    <StudentFigures students={decorations.students} />
+  </>
+)}
+
+{performanceMode && (
+  <>
+    <InstancedTrees positions={decorations.trees.slice(0, 4)} />
+    <InstancedBushes positions={decorations.bushes.slice(0, 4)} />
+  </>
+)}
 
         <CentralDirectoryBoard isNight={isNight} />
 
@@ -2573,19 +3486,17 @@ export default function CityScene() {
           .filter((road) => road.type === "vertical")
           .map((road, index) => (
             <RoadBillboard
-              key={road.key}
-              road={road}
-              index={index}
-              isNight={isNight}
-            />
+  key={road.key}
+  road={road}
+  index={index}
+  isNight={isNight}
+  performanceMode={performanceMode}
+/>
           ))}
 
-        {!performanceMode && (
-          <>
-            <InstancedStreetLamps positions={decorations.lamps} isNight={isNight} />
-            <Benches positions={decorations.benches} />
-          </>
-        )}
+        {!performanceMode && isNight && (
+  <InstancedStreetLamps positions={decorations.lamps} isNight={isNight} />
+)}
 
         <LotPads buildings={layout.buildings} />
 
@@ -2604,14 +3515,14 @@ export default function CityScene() {
               />
 
               <FacultyBuilding
-                faculty={faculty}
-                position={position}
-                onSelect={selectFaculty}
-                isDimmed={isDimmed}
-                isHighlighted={isHighlighted}
-                isSelected={isSelected}
-                performanceMode={performanceMode}
-              />
+  faculty={faculty}
+  position={position}
+  onSelect={selectFaculty}
+  isDimmed={isDimmed}
+  isHighlighted={isHighlighted}
+  isSelected={isSelected}
+  performanceMode={performanceMode}
+/>
             </group>
           );
         })}
@@ -2626,12 +3537,12 @@ export default function CityScene() {
       </Canvas>
 
       {selectedFaculty && (
-        <FacultyCard
-          faculty={selectedFaculty}
-          onClose={() => setSelectedFaculty(null)}
-          onUpdateFaculty={handleUpdateFaculty}
-        />
-      )}
+  <FacultyCard
+    faculty={selectedFaculty}
+    onClose={() => setSelectedFaculty(null)}
+    onCompare={addToCompare}
+  />
+)}
     </div>
   );
 }

@@ -7,12 +7,17 @@ const CAR_WIDTH = 1.05;
 const CAR_LENGTH = 1.75;
 const CAR_HEIGHT = 0.42;
 
-function pointInsideRect(x, z, rect) {
-  return x >= rect.xMin && x <= rect.xMax && z >= rect.zMin && z <= rect.zMax;
+function pointInsideRect(x, z, rect, margin = 0) {
+  return (
+    x >= rect.xMin - margin &&
+    x <= rect.xMax + margin &&
+    z >= rect.zMin - margin &&
+    z <= rect.zMax + margin
+  );
 }
 
-function pointOnAnyRoad(x, z, roadRects) {
-  return roadRects.some((rect) => pointInsideRect(x, z, rect));
+function pointOnAnyRoad(x, z, roadRects, margin = 0) {
+  return roadRects.some((rect) => pointInsideRect(x, z, rect, margin));
 }
 
 function getCarCorners(x, z, angle) {
@@ -37,7 +42,13 @@ function getCarCorners(x, z, angle) {
 
 function carFullyOnRoad(x, z, angle, roadRects) {
   const corners = getCarCorners(x, z, angle);
-  return corners.every((corner) => pointOnAnyRoad(corner.x, corner.z, roadRects));
+
+  // Small tolerance prevents the car from getting stuck on road/sidewalk edges.
+  const roadEdgeTolerance = 0.28;
+
+  return corners.every((corner) =>
+    pointOnAnyRoad(corner.x, corner.z, roadRects, roadEdgeTolerance)
+  );
 }
 
 function carHitsBuilding(x, z, buildingColliders) {
@@ -58,6 +69,50 @@ function canMoveTo(x, z, angle, roadRects, buildingColliders) {
   const hitsBuilding = carHitsBuilding(x, z, buildingColliders);
 
   return onRoad && !hitsBuilding;
+}
+
+function tryMoveWithSlide({
+  currentX,
+  currentZ,
+  nextX,
+  nextZ,
+  angle,
+  roadRects,
+  buildingColliders
+}) {
+  // 1. Try normal movement first.
+  if (canMoveTo(nextX, nextZ, angle, roadRects, buildingColliders)) {
+    return {
+      moved: true,
+      x: nextX,
+      z: nextZ
+    };
+  }
+
+  // 2. Try sliding only on X.
+  if (canMoveTo(nextX, currentZ, angle, roadRects, buildingColliders)) {
+    return {
+      moved: true,
+      x: nextX,
+      z: currentZ
+    };
+  }
+
+  // 3. Try sliding only on Z.
+  if (canMoveTo(currentX, nextZ, angle, roadRects, buildingColliders)) {
+    return {
+      moved: true,
+      x: currentX,
+      z: nextZ
+    };
+  }
+
+  // 4. Movement blocked.
+  return {
+    moved: false,
+    x: currentX,
+    z: currentZ
+  };
 }
 
 function CarModel({ boostRef, isNight, playerName }) {
@@ -188,24 +243,68 @@ function CarModel({ boostRef, isNight, playerName }) {
         />
       </mesh>
 
-      {[
-        [-0.62, 0.18, 0.52],
-        [0.62, 0.18, 0.52],
-        [-0.62, 0.18, -0.52],
-        [0.62, 0.18, -0.52]
-      ].map((p, i) => (
-        <group key={i} position={p}>
-          <mesh rotation={[Math.PI / 2, 0, 0]}>
-            <cylinderGeometry args={[0.22, 0.22, 0.2, 16]} />
-            <meshStandardMaterial color="#050505" />
-          </mesh>
+      {/* Cleaner side wheels */}
+{[
+  [-0.57, 0.2, 0.54],
+  [0.57, 0.2, 0.54],
+  [-0.57, 0.2, -0.54],
+  [0.57, 0.2, -0.54]
+].map(([x, y, z], i) => {
+  const isLeftSide = x < 0;
 
-          <mesh rotation={[Math.PI / 2, 0, 0]}>
-            <cylinderGeometry args={[0.1, 0.1, 0.215, 12]} />
-            <meshStandardMaterial color="#94a3b8" metalness={0.45} roughness={0.25} />
-          </mesh>
-        </group>
-      ))}
+  return (
+    <group key={i} position={[x, y, z]}>
+      {/* tire: cylinder axis points left-right now */}
+      <mesh rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.18, 0.18, 0.16, 18]} />
+        <meshStandardMaterial
+          color="#020617"
+          roughness={0.72}
+          metalness={0.05}
+        />
+      </mesh>
+
+      {/* rim */}
+      <mesh
+        position={[isLeftSide ? -0.085 : 0.085, 0, 0]}
+        rotation={[0, 0, Math.PI / 2]}
+      >
+        <cylinderGeometry args={[0.082, 0.082, 0.035, 14]} />
+        <meshStandardMaterial
+          color="#94a3b8"
+          metalness={0.55}
+          roughness={0.28}
+        />
+      </mesh>
+
+      {/* small dark center cap */}
+      <mesh
+        position={[isLeftSide ? -0.106 : 0.106, 0, 0]}
+        rotation={[0, 0, Math.PI / 2]}
+      >
+        <cylinderGeometry args={[0.035, 0.035, 0.018, 12]} />
+        <meshStandardMaterial color="#111827" />
+      </mesh>
+    </group>
+  );
+})}
+
+{/* Simple fenders to hide upper wheel awkwardness */}
+{[
+  [-0.55, 0.34, 0.54],
+  [0.55, 0.34, 0.54],
+  [-0.55, 0.34, -0.54],
+  [0.55, 0.34, -0.54]
+].map((p, i) => (
+  <mesh key={`fender-${i}`} position={p}>
+    <boxGeometry args={[0.12, 0.14, 0.42]} />
+    <meshStandardMaterial
+      color="#003a9b"
+      metalness={0.3}
+      roughness={0.35}
+    />
+  </mesh>
+))}
 
       <group ref={boostRef} visible={false}>
         <mesh position={[-0.16, 0.3, -1.02]} rotation={[Math.PI / 2, 0, 0]}>
@@ -286,9 +385,9 @@ export default function CarController({
   useFrame((_, delta) => {
     if (!carRef.current) return;
 
-    const baseMoveSpeed = 7.2;
-    const nitroMultiplier = 2.05;
-    const turnSpeed = 2.5;
+    const baseMoveSpeed = 8.2;
+const nitroMultiplier = 2.25;
+const turnSpeed = 2.35;
 
     const turningLeft = keys.current.a;
     const turningRight = keys.current.d;
@@ -310,27 +409,43 @@ export default function CarController({
     if (movingBackward) movement -= baseMoveSpeed * delta * 0.65;
 
     if (movement !== 0) {
-      const nextX = position.current.x + Math.sin(angle.current) * movement;
-      const nextZ = position.current.z + Math.cos(angle.current) * movement;
+  const currentX = position.current.x;
+  const currentZ = position.current.z;
 
-      if (
-        canMoveTo(
-          nextX,
-          nextZ,
-          angle.current,
-          roadRects,
-          buildingColliders
-        )
-      ) {
-        position.current.x = nextX;
-        position.current.z = nextZ;
-        currentSpeed.current = Math.abs(movement / Math.max(delta, 0.001)) * 5.8;
-      } else {
-        currentSpeed.current *= 0.7;
-      }
-    } else {
-      currentSpeed.current *= 0.88;
+  const nextX = currentX + Math.sin(angle.current) * movement;
+  const nextZ = currentZ + Math.cos(angle.current) * movement;
+
+  const slideResult = tryMoveWithSlide({
+    currentX,
+    currentZ,
+    nextX,
+    nextZ,
+    angle: angle.current,
+    roadRects,
+    buildingColliders
+  });
+
+  if (slideResult.moved) {
+    position.current.x = slideResult.x;
+    position.current.z = slideResult.z;
+    currentSpeed.current = Math.abs(movement / Math.max(delta, 0.001)) * 5.8;
+  } else {
+    // Small reverse nudge helps escape sidewalk/curb lock.
+    const nudge = movement > 0 ? -0.045 : 0.045;
+
+    const nudgeX = currentX + Math.sin(angle.current) * nudge;
+    const nudgeZ = currentZ + Math.cos(angle.current) * nudge;
+
+    if (canMoveTo(nudgeX, nudgeZ, angle.current, roadRects, buildingColliders)) {
+      position.current.x = nudgeX;
+      position.current.z = nudgeZ;
     }
+
+    currentSpeed.current *= 0.82;
+  }
+} else {
+  currentSpeed.current *= 0.9;
+}
 
     if (boostRef.current) {
       boostRef.current.visible = boosting;
@@ -377,21 +492,22 @@ export default function CarController({
 
     telemetryTimer.current += delta;
 
-    if (telemetryTimer.current > 0.3) {
+    if (telemetryTimer.current > 0.25) {
       telemetryTimer.current = 0;
 
       window.dispatchEvent(
-        new CustomEvent("facultycity-telemetry", {
-          detail: {
-            speedKmh: currentSpeed.current,
-            nitroActive: boosting,
-            carPosition: {
-              x: position.current.x,
-              z: position.current.z
-            }
-          }
-        })
-      );
+  new CustomEvent("facultycity-telemetry", {
+    detail: {
+      speedKmh: currentSpeed.current,
+      nitroActive: boosting,
+      carAngle: angle.current,
+      carPosition: {
+        x: position.current.x,
+        z: position.current.z
+      }
+    }
+  })
+);
     }
   });
 

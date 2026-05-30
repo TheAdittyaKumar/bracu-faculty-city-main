@@ -21,21 +21,25 @@ function toArray(value) {
 }
 
 function getPublicationCount(faculty) {
-  const publications = toArray(faculty.publications);
+  if (Number.isFinite(faculty?._publicationCount)) {
+    return faculty._publicationCount;
+  }
+
+  const publications = toArray(faculty?.publications);
   if (publications.length > 0) return publications.length;
 
-  const count = Number(faculty.publicationCount);
+  const count = Number(faculty?.publicationCount);
   return Number.isFinite(count) && count > 0 ? count : 0;
 }
 
 function getDisplayCode(faculty) {
-  const code = String(faculty.code || "").trim();
+  const code = String(faculty?.code || "").trim();
 
   if (code && code !== DATA_NOT_GIVEN) {
     return code.toUpperCase();
   }
 
-  const name = String(faculty.name || "").trim();
+  const name = String(faculty?.name || "").trim();
 
   if (!name || name === DATA_NOT_GIVEN) {
     return "?";
@@ -50,7 +54,9 @@ function getDisplayCode(faculty) {
 }
 
 function getDesignationKey(faculty) {
-  const designation = String(faculty.designation || faculty.role || "").toLowerCase();
+  if (faculty?._districtKey) return faculty._districtKey;
+
+  const designation = String(faculty?.designation || faculty?.role || "").toLowerCase();
 
   if (
     designation.includes("professor") &&
@@ -149,19 +155,25 @@ function getBuildingStyle(faculty) {
 }
 
 function getThesisInfo(faculty) {
-  const status = String(faculty.thesisStatus || "").toLowerCase();
-  const level = String(faculty.supervisionLevel || "").toLowerCase();
+  const precomputed = faculty?._thesisFlags;
+  const status = String(faculty?.thesisStatus || "").toLowerCase();
+  const level = String(faculty?.supervisionLevel || "").toLowerCase();
 
-  const accepting = status.includes("accepting") && !status.includes("not");
-  const notAccepting = status.includes("not accepting");
+  const accepting =
+    precomputed?.accepting ?? (status.includes("accepting") && !status.includes("not"));
 
-  const acceptsUG = accepting && level.includes("undergraduate");
+  const notAccepting =
+    precomputed?.notAccepting ?? status.includes("not accepting");
+
+  const acceptsUG =
+    precomputed?.acceptsUG ?? (accepting && level.includes("undergraduate"));
 
   const acceptsPG =
-    accepting &&
-    (level.includes("postgraduate") ||
-      level.includes("graduate") ||
-      level.includes("master"));
+    precomputed?.acceptsPG ??
+    (accepting &&
+      (level.includes("postgraduate") ||
+        level.includes("graduate") ||
+        level.includes("master")));
 
   let label = "?";
   let color = "#f59e0b";
@@ -196,7 +208,7 @@ function getThesisInfo(faculty) {
 function WindowGrid({ width, depth, height, isDimmed, thesisInfo, performanceMode }) {
   const windows = [];
 
-  const maxRows = performanceMode ? 2 : 4;
+  const maxRows = performanceMode ? 1 : 4;
   const rowCount = Math.max(1, Math.min(maxRows, Math.floor(height / 1.05)));
 
   const windowColor = thesisInfo.accepting ? "#fef08a" : "#111827";
@@ -207,12 +219,9 @@ function WindowGrid({ width, depth, height, isDimmed, thesisInfo, performanceMod
   for (let row = 0; row < rowCount; row++) {
     const y = 0.78 + row * 0.86;
 
-    // Front window strip
+    // Back windows: always shown, including Performance Mode.
     windows.push(
-      <mesh
-        key={`front-strip-${row}`}
-        position={[0, y, -depth / 2 - 0.018]}
-      >
+      <mesh key={`back-strip-${row}`} position={[0, y, depth / 2 + 0.018]}>
         <boxGeometry args={[width * 0.68, 0.15, 0.025]} />
         <meshStandardMaterial
           color={windowColor}
@@ -224,22 +233,21 @@ function WindowGrid({ width, depth, height, isDimmed, thesisInfo, performanceMod
       </mesh>
     );
 
-    // Back window strip
-    windows.push(
-      <mesh
-        key={`back-strip-${row}`}
-        position={[0, y, depth / 2 + 0.018]}
-      >
-        <boxGeometry args={[width * 0.68, 0.15, 0.025]} />
-        <meshStandardMaterial
-          color={windowColor}
-          emissive={emissive}
-          emissiveIntensity={emissiveIntensity}
-          transparent
-          opacity={opacity}
-        />
-      </mesh>
-    );
+    // Front windows: only shown when Performance Mode is off.
+    if (!performanceMode) {
+      windows.push(
+        <mesh key={`front-strip-${row}`} position={[0, y, -depth / 2 - 0.018]}>
+          <boxGeometry args={[width * 0.68, 0.15, 0.025]} />
+          <meshStandardMaterial
+            color={windowColor}
+            emissive={emissive}
+            emissiveIntensity={emissiveIntensity}
+            transparent
+            opacity={opacity}
+          />
+        </mesh>
+      );
+    }
   }
 
   return <>{windows}</>;
@@ -324,7 +332,10 @@ export default function FacultyBuilding({
   const opacity = isDimmed ? 0.16 : 1;
   const roofY = buildingHeight + 0.18;
 
-  const showHeavyText = !performanceMode || isHighlighted || isSelected;
+  const showShapeDetails = !performanceMode || isSelected || isHighlighted;
+const showWindows = true;
+const showStatusSign = !performanceMode || isSelected || isHighlighted;
+const showHeavyText = !performanceMode || isHighlighted || isSelected;
 
   function handleSelect(event) {
     event.stopPropagation();
@@ -339,7 +350,6 @@ export default function FacultyBuilding({
         <StaticRings thesisInfo={thesisInfo} width={style.width} />
       )}
 
-      {/* foundation */}
       <mesh position={[0, 0.08, 0]}>
         <boxGeometry args={[style.width + 0.46, 0.16, style.depth + 0.46]} />
         <meshStandardMaterial
@@ -349,7 +359,6 @@ export default function FacultyBuilding({
         />
       </mesh>
 
-      {/* main body */}
       <mesh position={[0, buildingHeight / 2 + 0.16, 0]}>
         <boxGeometry args={[style.width, buildingHeight, style.depth]} />
         <meshStandardMaterial
@@ -361,17 +370,17 @@ export default function FacultyBuilding({
         />
       </mesh>
 
-      {/* right side depth panel */}
-      <mesh position={[style.width / 2 + 0.012, buildingHeight / 2 + 0.16, 0]}>
-        <boxGeometry args={[0.04, buildingHeight * 0.96, style.depth * 0.94]} />
-        <meshStandardMaterial
-          color={style.sideColor}
-          transparent
-          opacity={isDimmed ? 0.12 : 0.75}
-        />
-      </mesh>
+      {showShapeDetails && (
+  <mesh position={[style.width / 2 + 0.012, buildingHeight / 2 + 0.16, 0]}>
+    <boxGeometry args={[0.04, buildingHeight * 0.96, style.depth * 0.94]} />
+    <meshStandardMaterial
+      color={style.sideColor}
+      transparent
+      opacity={isDimmed ? 0.12 : 0.75}
+    />
+  </mesh>
+)}
 
-      {/* roof slab */}
       <mesh position={[0, roofY, 0]}>
         <boxGeometry args={[style.width + 0.55, 0.24, style.depth + 0.55]} />
         <meshStandardMaterial
@@ -382,17 +391,17 @@ export default function FacultyBuilding({
         />
       </mesh>
 
-      {/* roof cap */}
-      <mesh position={[0, roofY + 0.18, 0]}>
-        <boxGeometry args={[style.width * 0.72, 0.12, style.depth * 0.72]} />
-        <meshStandardMaterial
-          color={style.sideColor}
-          transparent
-          opacity={opacity}
-        />
-      </mesh>
+      {showShapeDetails && (
+  <mesh position={[0, roofY + 0.18, 0]}>
+    <boxGeometry args={[style.width * 0.72, 0.12, style.depth * 0.72]} />
+    <meshStandardMaterial
+      color={style.sideColor}
+      transparent
+      opacity={opacity}
+    />
+  </mesh>
+)}
 
-      {/* small pyramid roof detail */}
       {!performanceMode && (
         <mesh position={[0, roofY + 0.31, 0]}>
           <coneGeometry args={[style.width * 0.38, 0.85, 4]} />
@@ -406,44 +415,46 @@ export default function FacultyBuilding({
         </mesh>
       )}
 
-      <WindowGrid
-        width={style.width}
-        depth={style.depth}
-        height={buildingHeight}
-        isDimmed={isDimmed}
-        thesisInfo={thesisInfo}
-        performanceMode={performanceMode}
+      {showWindows && (
+  <WindowGrid
+    width={style.width}
+    depth={style.depth}
+    height={buildingHeight}
+    isDimmed={isDimmed}
+    thesisInfo={thesisInfo}
+    performanceMode={performanceMode}
+  />
+)}
+
+      {showStatusSign && (
+  <group position={[0, roofY + 0.24, -style.depth * 0.34]}>
+    <mesh>
+      <boxGeometry args={[style.width * 0.82, 0.3, 0.08]} />
+      <meshStandardMaterial
+        color={thesisInfo.color}
+        emissive={thesisInfo.accepting ? thesisInfo.color : "#000000"}
+        emissiveIntensity={thesisInfo.accepting ? 0.24 : 0}
+        transparent
+        opacity={isDimmed ? 0.16 : 1}
       />
+    </mesh>
 
-      {/* thesis status sign */}
-      <group position={[0, roofY + 0.24, -style.depth * 0.34]}>
-        <mesh>
-          <boxGeometry args={[style.width * 0.82, 0.3, 0.08]} />
-          <meshStandardMaterial
-            color={thesisInfo.color}
-            emissive={thesisInfo.accepting ? thesisInfo.color : "#000000"}
-            emissiveIntensity={thesisInfo.accepting ? 0.24 : 0}
-            transparent
-            opacity={isDimmed ? 0.16 : 1}
-          />
-        </mesh>
+    {!isDimmed && showHeavyText && (
+      <Text
+        position={[0, 0.012, -0.052]}
+        fontSize={0.15}
+        color="white"
+        anchorX="center"
+        anchorY="middle"
+        outlineColor="#000000"
+        outlineWidth={0.014}
+      >
+        {thesisInfo.label}
+      </Text>
+    )}
+  </group>
+)}
 
-        {!isDimmed && showHeavyText && (
-          <Text
-            position={[0, 0.012, -0.052]}
-            fontSize={0.15}
-            color="white"
-            anchorX="center"
-            anchorY="middle"
-            outlineColor="#000000"
-            outlineWidth={0.014}
-          >
-            {thesisInfo.label}
-          </Text>
-        )}
-      </group>
-
-      {/* readable initials only when performance cost is acceptable */}
       {!isDimmed && showHeavyText && (
         <Billboard position={[0, buildingHeight + 1.0, 0]}>
           <Text
@@ -460,7 +471,6 @@ export default function FacultyBuilding({
         </Billboard>
       )}
 
-      {/* lightweight roof code plate in performance mode */}
       {!isDimmed && performanceMode && !isHighlighted && !isSelected && (
         <mesh position={[0, roofY + 0.28, 0.18]} rotation={[-Math.PI / 2, 0, 0]}>
           <planeGeometry args={[style.width * 0.82, 0.22]} />
@@ -473,7 +483,6 @@ export default function FacultyBuilding({
         </mesh>
       )}
 
-      {/* search / selected glow */}
       {(isHighlighted || isSelected) && (
         <mesh position={[0, buildingHeight / 2 + 0.35, 0]}>
           <cylinderGeometry

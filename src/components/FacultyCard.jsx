@@ -1,8 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 const DATA_NOT_GIVEN = "Data not given";
-const EDIT_API_BASE = "http://localhost:5174";
-const EDIT_PASSWORD = "123456789";
 
 const TABS = [
   "Overview",
@@ -13,91 +11,219 @@ const TABS = [
   "Links"
 ];
 
-function safeText(value) {
-  if (value === null || value === undefined || value === "") return DATA_NOT_GIVEN;
-  return String(value);
+function isMissing(value) {
+  if (value === null || value === undefined) return true;
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return true;
+    return value.every((item) => isMissing(item));
+  }
+
+  const text = String(value).trim();
+  const lower = text.toLowerCase();
+
+  return (
+    text === "" ||
+    lower === "data not given" ||
+    lower === "not given" ||
+    lower === "n/a" ||
+    lower === "na" ||
+    lower === "null" ||
+    lower === "undefined"
+  );
 }
 
+function safeText(value) {
+  if (isMissing(value)) return DATA_NOT_GIVEN;
+  return String(value).trim();
+}
+function isValidImageUrl(value) {
+  if (isMissing(value)) return false;
+
+  const text = String(value).trim();
+  const lower = text.toLowerCase();
+
+  if (
+    lower === "data not given" ||
+    lower === "not given" ||
+    lower === "n/a" ||
+    lower === "na"
+  ) {
+    return false;
+  }
+
+  return (
+    text.startsWith("http://") ||
+    text.startsWith("https://") ||
+    text.startsWith("/") ||
+    text.startsWith("data:image")
+  );
+}
 function toArray(value) {
   if (Array.isArray(value)) {
-    return value.map((item) => String(item).trim()).filter(Boolean);
+    return value
+      .map((item) => String(item || "").trim())
+      .filter((item) => !isMissing(item));
   }
 
   if (typeof value === "string") {
     return value
-      .split("\n")
+      .split(/\n+/)
       .map((item) => item.trim())
-      .filter(Boolean);
+      .filter((item) => !isMissing(item));
   }
 
   return [];
 }
 
-function arrayToTextarea(value) {
-  return toArray(value).join("\n");
+function getInitials(name) {
+  if (isMissing(name)) return "IMG";
+
+  const initials = String(name)
+    .trim()
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 3)
+    .toUpperCase();
+
+  return initials || "IMG";
 }
 
-function textareaToArray(value) {
-  return String(value || "")
-    .split("\n")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function Field({ label, value, onChange, multiline = false, placeholder = "" }) {
-  return (
-    <label style={{ display: "block", marginBottom: 10 }}>
-      <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4 }}>
-        {label}
-      </div>
-
-      {multiline ? (
-        <textarea
-          value={value}
-          placeholder={placeholder}
-          onChange={(event) => onChange(event.target.value)}
-          rows={5}
-          style={{
-            width: "100%",
-            resize: "vertical",
-            padding: "8px 9px",
-            borderRadius: 8,
-            border: "1px solid #cbd5e1",
-            fontSize: 12,
-            fontFamily: "Arial"
-          }}
-        />
-      ) : (
-        <input
-          value={value}
-          placeholder={placeholder}
-          onChange={(event) => onChange(event.target.value)}
-          style={{
-            width: "100%",
-            padding: "8px 9px",
-            borderRadius: 8,
-            border: "1px solid #cbd5e1",
-            fontSize: 12,
-            fontFamily: "Arial"
-          }}
-        />
-      )}
-    </label>
+function getPublications(faculty) {
+  return toArray(
+    faculty.publications ||
+      faculty.publicationList ||
+      faculty.conferencePapers ||
+      faculty.journalPapers
   );
+}
+
+function getPublicationCount(faculty) {
+  const publications = getPublications(faculty);
+
+  if (publications.length > 0) return publications.length;
+
+  const count = Number(faculty.publicationCount);
+  return Number.isFinite(count) && count > 0 ? count : 0;
+}
+
+function getResearchInterests(faculty) {
+  return toArray(
+    faculty.researchInterests ||
+      faculty.researchInterest ||
+      faculty.research ||
+      faculty.interests
+  );
+}
+
+function getCourses(faculty) {
+  return toArray(faculty.courses || faculty.coursesTaught || faculty.teaching);
+}
+
+function getEducation(faculty) {
+  return toArray(faculty.education || faculty.educationalBackground);
+}
+
+function getProfessionalActivity(faculty) {
+  return toArray(
+    faculty.professionalActivity ||
+      faculty.professionalActivities ||
+      faculty.activities
+  );
+}
+
+function getAwards(faculty) {
+  return toArray(faculty.awards || faculty.honors);
+}
+
+function getAddress(faculty) {
+  return toArray(faculty.address);
+}
+
+function getSynopsis(faculty) {
+  return toArray(faculty.synopsis || faculty.thesisSynopsis);
+}
+
+function getWebLinks(faculty) {
+  const links = [
+    faculty.profileUrl,
+    faculty.websiteUrl,
+    faculty.scholarUrl,
+    ...(Array.isArray(faculty.websites) ? faculty.websites : [])
+  ];
+
+  return Array.from(
+    new Set(
+      links
+        .map((link) => String(link || "").trim())
+        .filter((link) => !isMissing(link))
+    )
+  );
+}
+
+function getThesisStatus(faculty) {
+  return safeText(faculty.thesisStatus || faculty.thesisAvailability);
+}
+
+function getThesisRole(faculty) {
+  return safeText(faculty.supervisionRole || faculty.thesisRole);
+}
+
+function getThesisLevel(faculty) {
+  return safeText(faculty.supervisionLevel || faculty.thesisLevel);
+}
+
+function getThesisType(faculty) {
+  return safeText(faculty.supervisionType || faculty.thesisType);
 }
 
 function ListView({ items }) {
   const cleanItems = toArray(items);
 
   if (!cleanItems.length) {
-    return <p style={{ margin: 0 }}>{DATA_NOT_GIVEN}</p>;
+    return <p style={{ margin: 0, color: "#475569" }}>{DATA_NOT_GIVEN}</p>;
   }
 
   return (
     <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>
       {cleanItems.map((item, index) => (
-        <li key={`${item}-${index}`} style={{ marginBottom: 7, lineHeight: 1.35 }}>
+        <li
+          key={`${item}-${index}`}
+          style={{ marginBottom: 7, lineHeight: 1.4, color: "#111827" }}
+        >
           {item}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function LinkView({ links }) {
+  if (!links.length) {
+    return <p style={{ margin: 0, color: "#475569" }}>{DATA_NOT_GIVEN}</p>;
+  }
+
+  return (
+    <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>
+      {links.map((link, index) => (
+        <li
+          key={`${link}-${index}`}
+          style={{
+            marginBottom: 8,
+            lineHeight: 1.4,
+            color: "#111827",
+            wordBreak: "break-word"
+          }}
+        >
+          <a
+            href={link}
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: "#2563eb", fontWeight: 700 }}
+          >
+            {link}
+          </a>
         </li>
       ))}
     </ul>
@@ -111,7 +237,8 @@ function SectionTitle({ children }) {
         margin: "12px 0 6px",
         paddingBottom: 5,
         borderBottom: "1px solid #e5e7eb",
-        fontSize: 14
+        fontSize: 14,
+        color: "#0f172a"
       }}
     >
       {children}
@@ -119,125 +246,101 @@ function SectionTitle({ children }) {
   );
 }
 
-export default function FacultyCard({ faculty, onClose, onUpdateFaculty }) {
+function InfoPill({ children, tone = "neutral" }) {
+  const styles = {
+    neutral: {
+      background: "#e5e7eb",
+      color: "#111827"
+    },
+    good: {
+      background: "#dcfce7",
+      color: "#15803d"
+    },
+    bad: {
+      background: "#fee2e2",
+      color: "#b91c1c"
+    },
+    info: {
+      background: "#dbeafe",
+      color: "#1d4ed8"
+    }
+  };
+
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "5px 9px",
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 900,
+        ...styles[tone]
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+export default function FacultyCard({ faculty, onClose, onCompare }) {
   const [activeTab, setActiveTab] = useState("Overview");
-  const [editMode, setEditMode] = useState(false);
-  const [showPasswordBox, setShowPasswordBox] = useState(false);
-  const [passwordInput, setPasswordInput] = useState("");
-  const [adminPassword, setAdminPassword] = useState("");
-  const [passwordError, setPasswordError] = useState("");
-  const [draft, setDraft] = useState(faculty);
-  const [saveStatus, setSaveStatus] = useState("");
 
-  useEffect(() => {
-    setDraft(faculty);
-    setEditMode(false);
-    setShowPasswordBox(false);
-    setPasswordInput("");
-    setAdminPassword("");
-    setPasswordError("");
-    setSaveStatus("");
-    setActiveTab("Overview");
-  }, [faculty]);
+  const publications = useMemo(() => getPublications(faculty), [faculty]);
+  const publicationCount = useMemo(() => getPublicationCount(faculty), [faculty]);
+  const researchInterests = useMemo(() => getResearchInterests(faculty), [faculty]);
+  const courses = useMemo(() => getCourses(faculty), [faculty]);
+  const education = useMemo(() => getEducation(faculty), [faculty]);
+  const professionalActivity = useMemo(() => getProfessionalActivity(faculty), [faculty]);
+  const awards = useMemo(() => getAwards(faculty), [faculty]);
+  const address = useMemo(() => getAddress(faculty), [faculty]);
+  const synopsis = useMemo(() => getSynopsis(faculty), [faculty]);
+  const webLinks = useMemo(() => getWebLinks(faculty), [faculty]);
 
-  const publicationCount = useMemo(() => {
-    return toArray(draft?.publications).length;
-  }, [draft]);
+  if (!faculty) return null;
 
-  if (!faculty || !draft) return null;
+  const name = safeText(faculty.name);
+  const code = safeText(faculty.code);
+  const designation = safeText(faculty.designation || faculty.role);
+  const imageUrl = String(faculty.imageUrl || faculty.photoUrl || faculty.image || "").trim();
+  const hasValidImage = isValidImageUrl(imageUrl);
+  const thesisStatus = getThesisStatus(faculty);
+  const thesisStatusLower = thesisStatus.toLowerCase();
 
-  function updateField(field, value) {
-    setDraft((previous) => ({
-      ...previous,
-      [field]: value
-    }));
-  }
+  const thesisTone =
+    thesisStatusLower.includes("accepting") && !thesisStatusLower.includes("not")
+      ? "good"
+      : thesisStatusLower.includes("not")
+        ? "bad"
+        : "neutral";
 
-  function updateArrayField(field, value) {
-    setDraft((previous) => ({
-      ...previous,
-      [field]: textareaToArray(value)
-    }));
-  }
-
-  function requestEditAccess() {
-    setShowPasswordBox(true);
-    setPasswordInput("");
-    setPasswordError("");
-  }
-
-  function unlockEditMode() {
-    if (passwordInput !== EDIT_PASSWORD) {
-      setPasswordError("Wrong password.");
-      return;
-    }
-
-    setAdminPassword(passwordInput);
-    setShowPasswordBox(false);
-    setPasswordError("");
-    setEditMode(true);
-  }
-
-  async function saveChanges() {
-    setSaveStatus("Saving...");
-
-    const publications = toArray(draft.publications);
-
-    const updatedFaculty = {
-      ...draft,
-      publications,
-      publicationCount: publications.length,
-      researchInterests: toArray(draft.researchInterests),
-      professionalActivity: toArray(draft.professionalActivity),
-      awards: toArray(draft.awards),
-      courses: toArray(draft.courses),
-      education: toArray(draft.education),
-      websites: toArray(draft.websites),
-      address: toArray(draft.address),
-      synopsis: toArray(draft.synopsis)
-    };
-
-    try {
-      const response = await fetch(`${EDIT_API_BASE}/api/faculty/${draft.id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-password": adminPassword
-        },
-        body: JSON.stringify(updatedFaculty)
-      });
-
-      const result = await response.json();
-
-      if (!response.ok || !result.ok) {
-        throw new Error(result.message || "Failed to save.");
-      }
-
-      setDraft(result.faculty);
-      onUpdateFaculty?.(result.faculty);
-      setEditMode(false);
-      setSaveStatus("Saved to src/data/faculty.json.");
-    } catch (error) {
-      setSaveStatus(`Save failed: ${error.message}`);
-    }
-  }
-
-  function renderReadOnlyContent() {
+  function renderContent() {
     if (activeTab === "Overview") {
       return (
         <>
           <SectionTitle>Basic Information</SectionTitle>
-          <p><b>Designation:</b> {safeText(draft.designation || draft.role)}</p>
-          <p><b>Email:</b> {safeText(draft.email)}</p>
+          <p>
+            <b>Designation:</b> {designation}
+          </p>
+          <p>
+            <b>Email:</b> {safeText(faculty.email)}
+          </p>
 
           <SectionTitle>Biography</SectionTitle>
-          <p style={{ lineHeight: 1.45 }}>{safeText(draft.biography)}</p>
+          <p style={{ lineHeight: 1.45, marginTop: 6 }}>
+            {safeText(faculty.biography)}
+          </p>
 
           <SectionTitle>Education</SectionTitle>
-          <ListView items={draft.education} />
+          <ListView items={education} />
 
           <SectionTitle>Address</SectionTitle>
-          <ListView items={draft.address} />
+          <ListView items={address} />
+
+          <SectionTitle>Professional Activity</SectionTitle>
+          <ListView items={professionalActivity} />
+
+          <SectionTitle>Awards</SectionTitle>
+          <ListView items={awards} />
         </>
       );
     }
@@ -246,13 +349,7 @@ export default function FacultyCard({ faculty, onClose, onUpdateFaculty }) {
       return (
         <>
           <SectionTitle>Research Interests</SectionTitle>
-          <ListView items={draft.researchInterests} />
-
-          <SectionTitle>Professional Activity</SectionTitle>
-          <ListView items={draft.professionalActivity} />
-
-          <SectionTitle>Awards</SectionTitle>
-          <ListView items={draft.awards} />
+          <ListView items={researchInterests} />
         </>
       );
     }
@@ -261,10 +358,24 @@ export default function FacultyCard({ faculty, onClose, onUpdateFaculty }) {
       return (
         <>
           <SectionTitle>Publication Count</SectionTitle>
-          <p style={{ fontWeight: 800 }}>{publicationCount}</p>
+          <div
+            style={{
+              display: "inline-block",
+              minWidth: 70,
+              padding: "8px 12px",
+              borderRadius: 12,
+              background: "#f8fafc",
+              border: "1px solid #e5e7eb",
+              fontSize: 24,
+              fontWeight: 900,
+              color: "#0f172a"
+            }}
+          >
+            {publicationCount}
+          </div>
 
           <SectionTitle>Publication List</SectionTitle>
-          <ListView items={draft.publications} />
+          <ListView items={publications} />
         </>
       );
     }
@@ -273,35 +384,32 @@ export default function FacultyCard({ faculty, onClose, onUpdateFaculty }) {
       return (
         <>
           <SectionTitle>Courses Taught</SectionTitle>
-          <ListView items={draft.courses} />
+          <ListView items={courses} />
         </>
       );
     }
 
     if (activeTab === "Thesis") {
-      const thesisStatus = String(draft.thesisStatus || "").toLowerCase();
-
       return (
         <>
           <SectionTitle>Thesis / Supervision</SectionTitle>
+
+          <div style={{ marginBottom: 12 }}>
+            <InfoPill tone={thesisTone}>{thesisStatus}</InfoPill>
+          </div>
+
           <p>
-            <b>Status:</b>{" "}
-            <span
-              style={{
-                color: thesisStatus.includes("not") ? "#dc2626" : "#16a34a",
-                fontWeight: 800
-              }}
-            >
-              {safeText(draft.thesisStatus)}
-            </span>
+            <b>Role:</b> {getThesisRole(faculty)}
+          </p>
+          <p>
+            <b>Level:</b> {getThesisLevel(faculty)}
+          </p>
+          <p>
+            <b>Type:</b> {getThesisType(faculty)}
           </p>
 
-          <p><b>Role:</b> {safeText(draft.supervisionRole)}</p>
-          <p><b>Level:</b> {safeText(draft.supervisionLevel)}</p>
-          <p><b>Type:</b> {safeText(draft.supervisionType)}</p>
-
           <SectionTitle>Synopsis</SectionTitle>
-          <ListView items={draft.synopsis} />
+          <ListView items={synopsis} />
         </>
       );
     }
@@ -309,201 +417,13 @@ export default function FacultyCard({ faculty, onClose, onUpdateFaculty }) {
     if (activeTab === "Links") {
       return (
         <>
-          <SectionTitle>Official Profile</SectionTitle>
-          {draft.profileUrl ? (
-            <a href={draft.profileUrl} target="_blank" rel="noreferrer">
-              {draft.profileUrl}
-            </a>
-          ) : (
-            <p>{DATA_NOT_GIVEN}</p>
-          )}
-
-          <SectionTitle>Websites</SectionTitle>
-          <ListView items={draft.websites} />
+          <SectionTitle>Websites and Profile Links</SectionTitle>
+          <LinkView links={webLinks} />
         </>
       );
     }
 
     return null;
-  }
-
-  function renderEditContent() {
-    return (
-      <>
-        <SectionTitle>Edit Basic Information</SectionTitle>
-
-        <Field
-          label="Name"
-          value={safeText(draft.name) === DATA_NOT_GIVEN ? "" : draft.name}
-          onChange={(value) => updateField("name", value)}
-        />
-
-        <Field
-          label="Code"
-          value={safeText(draft.code) === DATA_NOT_GIVEN ? "" : draft.code}
-          onChange={(value) => updateField("code", value)}
-        />
-
-        <Field
-          label="Designation"
-          value={safeText(draft.designation) === DATA_NOT_GIVEN ? "" : draft.designation}
-          onChange={(value) => updateField("designation", value)}
-        />
-
-        <Field
-          label="Email"
-          value={safeText(draft.email) === DATA_NOT_GIVEN ? "" : draft.email}
-          onChange={(value) => updateField("email", value)}
-        />
-
-        <Field
-          label="Image URL"
-          value={safeText(draft.imageUrl) === DATA_NOT_GIVEN ? "" : draft.imageUrl}
-          onChange={(value) => updateField("imageUrl", value)}
-        />
-
-        <Field
-          label="Official Profile URL"
-          value={safeText(draft.profileUrl) === DATA_NOT_GIVEN ? "" : draft.profileUrl}
-          onChange={(value) => updateField("profileUrl", value)}
-        />
-
-        <Field
-          label="Biography"
-          value={safeText(draft.biography) === DATA_NOT_GIVEN ? "" : draft.biography}
-          onChange={(value) => updateField("biography", value)}
-          multiline
-        />
-
-        <Field
-          label="Research Interests — one per line"
-          value={arrayToTextarea(draft.researchInterests)}
-          onChange={(value) => updateArrayField("researchInterests", value)}
-          multiline
-        />
-
-        <Field
-          label="Publications — one per line"
-          value={arrayToTextarea(draft.publications)}
-          onChange={(value) => updateArrayField("publications", value)}
-          multiline
-        />
-
-        <Field
-          label="Courses — one per line"
-          value={arrayToTextarea(draft.courses)}
-          onChange={(value) => updateArrayField("courses", value)}
-          multiline
-        />
-
-        <Field
-          label="Education — one per line"
-          value={arrayToTextarea(draft.education)}
-          onChange={(value) => updateArrayField("education", value)}
-          multiline
-        />
-
-        <Field
-          label="Professional Activity — one per line"
-          value={arrayToTextarea(draft.professionalActivity)}
-          onChange={(value) => updateArrayField("professionalActivity", value)}
-          multiline
-        />
-
-        <Field
-          label="Awards — one per line"
-          value={arrayToTextarea(draft.awards)}
-          onChange={(value) => updateArrayField("awards", value)}
-          multiline
-        />
-
-        <Field
-          label="Websites — one per line"
-          value={arrayToTextarea(draft.websites)}
-          onChange={(value) => updateArrayField("websites", value)}
-          multiline
-        />
-
-        <Field
-          label="Address — one per line"
-          value={arrayToTextarea(draft.address)}
-          onChange={(value) => updateArrayField("address", value)}
-          multiline
-        />
-
-        <SectionTitle>Edit Thesis / Supervision</SectionTitle>
-
-        <Field
-          label="Thesis Status"
-          value={safeText(draft.thesisStatus) === DATA_NOT_GIVEN ? "" : draft.thesisStatus}
-          onChange={(value) => updateField("thesisStatus", value)}
-          placeholder="Accepting / Not Accepting"
-        />
-
-        <Field
-          label="Supervision Role"
-          value={safeText(draft.supervisionRole) === DATA_NOT_GIVEN ? "" : draft.supervisionRole}
-          onChange={(value) => updateField("supervisionRole", value)}
-        />
-
-        <Field
-          label="Supervision Level"
-          value={safeText(draft.supervisionLevel) === DATA_NOT_GIVEN ? "" : draft.supervisionLevel}
-          onChange={(value) => updateField("supervisionLevel", value)}
-        />
-
-        <Field
-          label="Supervision Type"
-          value={safeText(draft.supervisionType) === DATA_NOT_GIVEN ? "" : draft.supervisionType}
-          onChange={(value) => updateField("supervisionType", value)}
-        />
-
-        <Field
-          label="Synopsis — one per line"
-          value={arrayToTextarea(draft.synopsis)}
-          onChange={(value) => updateArrayField("synopsis", value)}
-          multiline
-        />
-
-        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          <button
-            onClick={saveChanges}
-            style={{
-              flex: 1,
-              border: "none",
-              borderRadius: 8,
-              padding: "9px 10px",
-              background: "#16a34a",
-              color: "white",
-              fontWeight: 800,
-              cursor: "pointer"
-            }}
-          >
-            Save to faculty.json
-          </button>
-
-          <button
-            onClick={() => {
-              setDraft(faculty);
-              setEditMode(false);
-              setSaveStatus("");
-            }}
-            style={{
-              flex: 1,
-              border: "none",
-              borderRadius: 8,
-              padding: "9px 10px",
-              background: "#e5e7eb",
-              color: "#111827",
-              fontWeight: 800,
-              cursor: "pointer"
-            }}
-          >
-            Cancel
-          </button>
-        </div>
-      </>
-    );
   }
 
   return (
@@ -514,6 +434,7 @@ export default function FacultyCard({ faculty, onClose, onUpdateFaculty }) {
         right: 20,
         zIndex: 25,
         width: 390,
+        maxWidth: "calc(100vw - 40px)",
         maxHeight: "88vh",
         overflowY: "auto",
         background: "rgba(255,255,255,0.97)",
@@ -538,21 +459,25 @@ export default function FacultyCard({ faculty, onClose, onUpdateFaculty }) {
           fontWeight: 900,
           cursor: "pointer"
         }}
+        title="Close"
       >
         ×
       </button>
 
       <div style={{ display: "flex", gap: 12, alignItems: "center", paddingRight: 28 }}>
-        {draft.imageUrl ? (
+        {hasValidImage ? (
           <img
-            src={draft.imageUrl}
-            alt={draft.name}
+            src={imageUrl}
+            alt={name}
             style={{
               width: 72,
               height: 72,
               objectFit: "cover",
               borderRadius: 12,
               background: "#e5e7eb"
+            }}
+            onError={(event) => {
+              event.currentTarget.style.display = "none";
             }}
           />
         ) : (
@@ -566,15 +491,18 @@ export default function FacultyCard({ faculty, onClose, onUpdateFaculty }) {
               alignItems: "center",
               justifyContent: "center",
               color: "#64748b",
-              fontWeight: 800
+              fontWeight: 900,
+              fontSize: 18
             }}
           >
-            IMG
+            {getInitials(name)}
           </div>
         )}
 
         <div>
-          <h2 style={{ margin: 0, fontSize: 22 }}>{safeText(draft.name)}</h2>
+          <h2 style={{ margin: 0, fontSize: 22, lineHeight: 1.12 }}>
+            {name}
+          </h2>
 
           <span
             style={{
@@ -587,15 +515,32 @@ export default function FacultyCard({ faculty, onClose, onUpdateFaculty }) {
               fontWeight: 800
             }}
           >
-            {safeText(draft.code)}
+            {code}
           </span>
 
           <div style={{ marginTop: 5, fontWeight: 800 }}>
-            {safeText(draft.designation || draft.role)}
+            {designation}
           </div>
         </div>
       </div>
-
+            {onCompare && (
+  <button
+    onClick={() => onCompare(faculty)}
+    style={{
+      marginTop: 14,
+      width: "100%",
+      border: "none",
+      borderRadius: 10,
+      padding: "9px 10px",
+      background: "#2563eb",
+      color: "white",
+      fontWeight: 900,
+      cursor: "pointer"
+    }}
+  >
+    Add to Compare
+  </button>
+)}
       <div
         style={{
           display: "flex",
@@ -625,118 +570,7 @@ export default function FacultyCard({ faculty, onClose, onUpdateFaculty }) {
         ))}
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        {!editMode && (
-          <button
-            onClick={requestEditAccess}
-            style={{
-              border: "none",
-              borderRadius: 8,
-              padding: "8px 10px",
-              background: "#2563eb",
-              color: "white",
-              fontWeight: 800,
-              cursor: "pointer"
-            }}
-          >
-            Edit Profile
-          </button>
-        )}
-
-        {editMode && (
-          <button
-            onClick={() => {
-              setDraft(faculty);
-              setEditMode(false);
-              setSaveStatus("");
-            }}
-            style={{
-              border: "none",
-              borderRadius: 8,
-              padding: "8px 10px",
-              background: "#ef4444",
-              color: "white",
-              fontWeight: 800,
-              cursor: "pointer"
-            }}
-          >
-            Exit Edit Mode
-          </button>
-        )}
-      </div>
-
-      {showPasswordBox && (
-        <div
-          style={{
-            padding: 10,
-            marginBottom: 12,
-            borderRadius: 10,
-            background: "#f8fafc",
-            border: "1px solid #cbd5e1"
-          }}
-        >
-          <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6 }}>
-            Enter admin password
-          </div>
-
-          <input
-            type="password"
-            value={passwordInput}
-            onChange={(event) => setPasswordInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") unlockEditMode();
-            }}
-            style={{
-              width: "100%",
-              padding: "8px 9px",
-              borderRadius: 8,
-              border: "1px solid #cbd5e1",
-              marginBottom: 8
-            }}
-          />
-
-          {passwordError && (
-            <div style={{ color: "#dc2626", fontSize: 12, marginBottom: 8 }}>
-              {passwordError}
-            </div>
-          )}
-
-          <button
-            onClick={unlockEditMode}
-            style={{
-              border: "none",
-              borderRadius: 8,
-              padding: "8px 10px",
-              background: "#111827",
-              color: "white",
-              fontWeight: 800,
-              cursor: "pointer"
-            }}
-          >
-            Unlock Editing
-          </button>
-        </div>
-      )}
-
-      {saveStatus && (
-        <div
-          style={{
-            marginBottom: 10,
-            padding: "8px 10px",
-            borderRadius: 8,
-            background: saveStatus.startsWith("Save failed") ? "#fee2e2" : "#dcfce7",
-            color: saveStatus.startsWith("Save failed") ? "#991b1b" : "#166534",
-            fontSize: 12,
-            fontWeight: 800
-          }}
-        >
-          {saveStatus}
-        </div>
-      )}
-
-      <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
-        {editMode ? renderEditContent() : renderReadOnlyContent()}
-      </div>
+      <div>{renderContent()}</div>
     </div>
   );
 }
